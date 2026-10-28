@@ -1,0 +1,8 @@
+{
+  "name": "rixs-cut-planner",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Soft X-ray RIXS geometry and phenomenological spectrum planner",
+  "scripts": { "start": "node server.cjs", "test": "node --test tests/*.test.cjs" },
+  "engines": { "node": ">=18" }
+}
