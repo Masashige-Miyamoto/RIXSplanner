@@ -7,8 +7,9 @@ const fs=require('node:fs');
 const path=require('node:path');
 const root=path.join(__dirname,'..');
 
-function harness(saved){
+function harness(saved,language){
   const downloads=[],blobs=new Map(),storage=new Map(saved?[['rixs-cut-planner.v1',saved]]:[]);
+  if(language)storage.set('rixs-language',language);
   class Element{
     constructor(tag){this.tagName=tag;this.attrs={};this.children=[];this.listeners={};this.style={};this.dataset={};this._text='';this.value='';this.checked=false;this.disabled=false;this.hidden=false;this.classList={add(){},remove(){}};}
     set value(v){this._value=String(v);}
@@ -36,16 +37,16 @@ function harness(saved){
   const voidTags=new Set(['meta','link','input','br','hr']);
   for(const match of html.matchAll(/<(\/?)([a-z][\w-]*)([^>]*?)>/gi)){
     const [,close,tag,attrs]=match;if(close){while(stack.length>1){if(stack.pop().tagName===tag)break;}continue;}
-    const el=new Element(tag);for(const m of attrs.matchAll(/([\w-]+)(?:="([^"]*)")?/g))el.setAttribute(m[1],m[2]??'');stack.at(-1).append(el);if(!voidTags.has(tag))stack.push(el);
+    const el=new Element(tag);for(const m of attrs.matchAll(/([\w-]+)(?:="([^"]*)")?/g))el.setAttribute(m[1],(m[2]??'').replaceAll('&quot;','"').replaceAll('&lt;','<').replaceAll('&gt;','>').replaceAll('&amp;','&'));stack.at(-1).append(el);if(!voidTags.has(tag))stack.push(el);
   }
-  document.getElementById=id=>document.querySelector('#'+id);document.createElement=tag=>new Element(tag);document.createElementNS=(_,tag)=>new Element(tag);document.body=document.querySelector('body');
+  document.getElementById=id=>document.querySelector('#'+id);document.createElement=tag=>new Element(tag);document.createElementNS=(_,tag)=>new Element(tag);document.body=document.querySelector('body');document.documentElement=document.querySelector('html');
   const ctx={document,console,Blob,Uint8ClampedArray,setTimeout:()=>0,requestAnimationFrame:fn=>{fn();return 1;},cancelAnimationFrame(){},
     localStorage:{getItem:key=>storage.get(key)??null,setItem:(key,value)=>storage.set(key,value)},
     URL:{createObjectURL:blob=>{const id='blob:'+blobs.size;blobs.set(id,blob);return id;},revokeObjectURL(){}},
     XMLSerializer:class{serializeToString(){return '<svg xmlns="http://www.w3.org/2000/svg"/>';}}
   };
   ctx.window=ctx;ctx.globalThis=ctx;vm.createContext(ctx);
-  for(const file of ['reference.js','lattice.js','model.js','map.js','app.js'])vm.runInContext(fs.readFileSync(path.join(root,'assets/js',file),'utf8'),ctx,{filename:file});
+  for(const file of ['i18n.js','reference.js','lattice.js','model.js','map.js','app.js'])vm.runInContext(fs.readFileSync(path.join(root,'assets/js',file),'utf8'),ctx,{filename:file});
   const $=id=>document.getElementById(id);
   return {$,document,storage,downloads,input:async(id,value)=>{$(id).value=String(value);await $(id).emit('input');},ctx};
 }
@@ -66,7 +67,7 @@ test('UI scan slider, crystal restrictions, edge application and reference searc
   await h.input('lattice','orthorhombic');assert.equal(h.$('b').disabled,false);
   await h.$('elements').children.find(b=>b.dataset.element==='O').click();await h.$('edgeTable').children[0].querySelector('button').click();assert.equal(h.$('energy').value,'531');assert.equal(h.$('resonance').value,'932.7');await h.$('elements').children[0].click();
   await h.input('edgeSearch','Cu');assert.equal(h.$('edgeTable').children.length,3);
-  await h.input('edgeSearch','no-match');assert.equal(h.$('edgeTable').children.length,1);assert.match(h.$('edgeTable').textContent,/一致する参照値がありません/);
+  await h.input('edgeSearch','no-match');assert.equal(h.$('edgeTable').children.length,1);assert.match(h.$('edgeTable').textContent,/No matching reference/);
 });
 test('UI downloads contain matching CSV data and reproducible settings',async()=>{
   const h=harness();for(const id of ['scanDownload','spectrumDownload','heatmapDownload','saveSettings'])await h.$(id).click();
@@ -80,7 +81,7 @@ test('UI downloads contain matching CSV data and reproducible settings',async()=
 });
 test('UI rejects malformed JSON and corrupted saved settings safely',async()=>{
   const h=harness('{broken');assert.equal(h.$('energy').value,'932.7');assert.equal(h.$('message').hidden,false);
-  await h.input('energy',950);h.$('loadSettings').files=[{size:100,text:async()=>JSON.stringify({version:1,settings:{energy:'not-number'}})}];await h.$('loadSettings').emit('change');assert.equal(h.$('energy').value,'950');assert.match(h.$('message').textContent,/読込できません/);
+  await h.input('energy',950);h.$('loadSettings').files=[{size:100,text:async()=>JSON.stringify({version:1,settings:{energy:'not-number'}})}];await h.$('loadSettings').emit('change');assert.equal(h.$('energy').value,'950');assert.match(h.$('message').textContent,/Could not load settings/);
   await h.$('reset').click();assert.equal(h.$('energy').value,'932.7');assert.equal(h.$('error').hidden,true);
 });
 
@@ -160,9 +161,10 @@ test('incidence slider preserves 2theta or L and rejects unreachable L without c
 });
 test('scan-only errors retain live geometry, spectrum and L-locked controls',async()=>{
   const h=harness();await h.input('angleMode','l');await h.input('incidenceRange',20);
+  assert.equal(h.$('scanError').hidden,true);await h.input('end',130);
   assert.equal(h.$('error').hidden,true);assert.equal(h.$('scanError').hidden,false);assert.ok(+h.$('scattering').value<140);assert.ok(+h.$('qMagnitude').textContent>0);assert.equal(h.$('scanDownload').disabled,true);assert.equal(h.$('spectrumDownload').disabled,false);
   await h.$('scanDownload').click();assert.equal(h.downloads.length,0);
-  await h.input('end',130);assert.equal(h.$('scanError').hidden,true);assert.equal(h.$('scanDownload').disabled,false);
+  await h.input('end',30);assert.equal(h.$('scanError').hidden,true);assert.equal(h.$('scanDownload').disabled,false);
   await h.input('hStep',.000001);assert.equal(h.$('scanError').hidden,false);assert.match(h.$('scanError').textContent,/2,001/);
   await h.input('hStep',.02);assert.equal(h.$('scanError').hidden,true);
 });
@@ -173,4 +175,65 @@ test('H-spaced CSV includes tilt, derived timing and consistent unit-independent
   for(let i=1;i<rows.length-1;i++)assert.ok(Math.abs(Math.abs(rows[i][11]-rows[i-1][11])-.025)<1e-10);
   assert.ok(rows.every(row=>row[16]===25&&row[12]>0));
   const count=rows.length;await h.input('units','angstrom');assert.equal(+h.$('pointCount').textContent,count);
+});
+
+
+test('English source and default UI switch to Japanese without changing conditions or camera',async()=>{
+  const h=harness(),html=fs.readFileSync(path.join(root,'index.html'),'utf8');
+  assert.match(html,/<html lang="en">/);assert.doesNotMatch(html,/[ぁ-んァ-ヶ一-龠]/);
+  assert.equal(h.document.documentElement.getAttribute('lang'),'en');assert.equal(h.$('saveSettings').textContent,'Save settings');
+  assert.match(h.$('spectrumSummary').textContent,/Dispersive peak/);assert.match(h.$('momentumMap').getAttribute('aria-label'),/Interactive/);
+  await h.input('dimension',3);await h.input('tilt',22);await h.$('mapPan').click();await h.$('zoomIn').click();
+  const svg=h.$('momentumMap'),camera=svg.getAttribute('data-camera'),point=svg.querySelector('circle').getAttribute('cx'),q=h.$('hkl').textContent,saved=h.storage.get('rixs-cut-planner.v1');
+  h.$('language').value='ja';await h.$('language').emit('change');
+  assert.equal(h.document.documentElement.getAttribute('lang'),'ja');assert.equal(h.$('saveSettings').textContent,'設定を保存');assert.match(h.$('spectrumSummary').textContent,/分散ピーク/);assert.match(svg.getAttribute('aria-label'),/操作可能/);
+  assert.equal(h.$('energy').value,'932.7');assert.equal(h.$('hkl').textContent,q);assert.equal(h.storage.get('rixs-cut-planner.v1'),saved);assert.equal(svg.getAttribute('data-camera'),camera);assert.equal(svg.querySelector('circle').getAttribute('cx'),point);assert.equal(svg.getAttribute('data-drag-mode'),'pan');
+  const restored=harness(saved,h.storage.get('rixs-language'));assert.equal(restored.$('language').value,'ja');assert.equal(restored.$('saveSettings').textContent,'設定を保存');
+  h.$('language').value='en';await h.$('language').emit('change');assert.equal(h.$('saveSettings').textContent,'Save settings');assert.equal(h.$('hkl').textContent,q);
+});
+test('validation, fixed-L rejection and notifications follow language changes',async()=>{
+  const h=harness(),lang=async value=>{h.$('language').value=value;await h.$('language').emit('change');};
+  await h.input('incidence',180);assert.match(h.$('error').textContent,/must satisfy/);await lang('ja');assert.match(h.$('error').textContent,/満たす必要/);assert.equal(h.$('incidence').value,'180');
+  await h.input('incidence',25);await h.input('angleMode','l');await h.input('incidenceRange',80);assert.match(h.$('angleError').textContent,/直前の配置/);await lang('en');assert.match(h.$('angleError').textContent,/previous geometry/);
+  await h.input('angleMode','scattering');await h.$('saveSettings').click();assert.match(h.$('message').textContent,/Settings saved/);await lang('ja');assert.match(h.$('message').textContent,/JSON に保存/);
+  h.$('loadSettings').files=[{size:100001,text:async()=>''}];await h.$('loadSettings').emit('change');assert.match(h.$('message').textContent,/大きすぎ/);await lang('en');assert.match(h.$('message').textContent,/too large/);assert.doesNotMatch(h.$('message').textContent,/[ぁ-んァ-ヶ一-龠]/);
+});
+test('current 3D hairlines project to back panes and follow units, angles and camera',async()=>{
+  const h=harness(),svg=h.$('momentumMap');assert.equal(svg.querySelector('[data-current-hairlines]'),null);
+  await h.input('dimension',3);await h.input('tilt',25);const guides=()=>svg.querySelector('[data-current-hairlines]');assert.equal(guides().querySelectorAll('line').length,9);
+  for(const units of ['angstrom','rlu']){
+    await h.input('units',units);const state=JSON.parse(h.storage.get('rixs-cut-planner.v1')).settings,q=h.ctx.RIXS.displayVector(h.ctx.RIXS.momentum(state).q,state);
+    const lines=guides().querySelectorAll('line'),spikes=lines.filter(l=>l.getAttribute('data-guide-kind')==='spike');assert.equal(spikes.length,3);
+    for(const line of spikes){const a=line.getAttribute('data-from').split(',').map(Number),b=line.getAttribute('data-to').split(',').map(Number),axis=+line.getAttribute('data-guide-axis');a.forEach((v,i)=>assert.ok(Math.abs(v-q[i])<1e-12));for(let i=0;i<3;i++)if(i!==axis)assert.equal(a[i],b[i]);}
+    const before=spikes[0].getAttribute('x1');await svg.emit('keydown',{key:'ArrowRight'});assert.notEqual(guides().querySelector('line').getAttribute('x1'),before);
+  }
+  await h.document.querySelectorAll('button').find(b=>b.dataset.view==='xy').click();assert.equal(guides().querySelectorAll('line').length,3);
+  const before=guides().querySelector('line').getAttribute('data-from');await h.input('incidence',35);assert.notEqual(guides().querySelector('line').getAttribute('data-from'),before);
+  await h.input('dimension',2);assert.equal(guides(),null);
+});
+test('map controls share the readout row and projected crosses are on their respective panes',()=>{
+  const h=harness(),tools=h.$('mapPan').parent,row=tools.parent;assert.equal(row.getAttribute('class'),'map-readout-row');assert.ok(row.querySelector('#hkl'));
+  const {projectionGuides,camera}=h.ctx.RIXSMap,point=[.4,.2,-.7],min=[-1,-1,-1],max=[1,1,1];
+  for(const yaw of [-2,.3,2]){
+    const segments=projectionGuides(point,min,max,yaw,.4);assert.equal(segments.length,9);
+    for(const segment of segments){const axis=segment.axis,unit=[0,0,0];unit[axis]=1;const side=camera(unit,yaw,.4)[2]>=0?-1:1;assert.equal(segment.b[axis],side);if(segment.kind==='projection'){assert.equal(segment.a[axis],side);const changed=segment.a.map((v,i)=>v!==segment.b[i]?i:-1).filter(i=>i>=0);assert.equal(changed.length,1);assert.equal(segment.a[changed[0]],-1);assert.equal(segment.b[changed[0]],1);}}
+  }
+});
+
+
+test('fixed-L mode clamps scan range and exports the changing scattering geometry',async()=>{
+  const h=harness(),state=()=>JSON.parse(h.storage.get('rixs-cut-planner.v1')).settings;
+  await h.input('tilt',25);await h.input('angleMode','l');const locked=state().lockedL,range=h.ctx.RIXS.scanLimits(state());
+  assert.equal(+h.$('start').value,range.min);assert.equal(+h.$('end').value,range.max);assert.equal(+h.$('startRange').min,range.min);assert.equal(+h.$('endRange').max,range.max);assert.match(h.$('scanModeNote').textContent,/fixed L/);assert.equal(h.$('scanError').hidden,true);
+  h.$('allZones').checked=true;await h.$('allZones').emit('input');assert.equal(h.$('error').hidden,true);
+  await h.$('scanDownload').click();const csv=await h.downloads[0].blob.text(),rows=csv.split('\n').filter(l=>!l.startsWith('#')).slice(1).map(l=>l.split(',').map(Number));
+  assert.equal(rows.length,+h.$('pointCount').textContent);assert.ok(rows.at(-1)[15]>rows[0][15]);
+  for(let i=0;i<rows.length;i++){assert.ok(Math.abs(rows[i][13]-locked)<1e-10);assert.ok(Math.abs(rows[i][1]+rows[i][2]-rows[i][15])<1e-10);if(i>0&&i<rows.length-1)assert.ok(Math.abs(Math.abs(rows[i][11]-rows[i-1][11])-state().hStep)<1e-10);}
+  const start=h.$('start').value,end=h.$('end').value;await h.input('incidenceRange',20);assert.equal(h.$('start').value,start);assert.equal(h.$('end').value,end);assert.equal(h.$('scanError').hidden,true);
+  h.$('language').value='ja';await h.$('language').emit('change');assert.match(h.$('scanModeNote').textContent,/L・tilt・φ を固定/);assert.match(h.$('scanRangeNote').textContent,/走査可能/);
+  await h.input('angleMode','scattering');assert.match(h.$('scanModeNote').textContent,/2θ・tilt・φ を固定/);await h.$('scanDownload').click();const fixed=(await h.downloads.at(-1).blob.text()).split('\n').filter(l=>!l.startsWith('#')).slice(1).map(l=>l.split(',').map(Number));assert.ok(fixed.every(row=>row[15]===state().scattering));
+});
+test('box headings have no ordinal numbers in either language',async()=>{
+  const h=harness(),html=fs.readFileSync(path.join(root,'index.html'),'utf8');assert.doesNotMatch(html,/class="section-number"/);assert.doesNotMatch(html,/<h2><span>0[1-9]<\/span>/);
+  for(const language of ['en','ja']){h.$('language').value=language;await h.$('language').emit('change');for(const heading of h.document.querySelectorAll('h2'))assert.doesNotMatch(heading.textContent,/^\s*0[1-9]/);}
 });

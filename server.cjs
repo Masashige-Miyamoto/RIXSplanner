@@ -3,7 +3,7 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const root = fs.realpathSync(__dirname);
-const publicFiles = new Set(['index.html', 'assets/css/app.css', 'assets/js/model.js', 'assets/js/lattice.js', 'assets/js/map.js', 'assets/js/app.js', 'assets/js/reference.js']);
+const publicFiles = new Set(['index.html', 'assets/css/app.css', 'assets/js/i18n.js', 'assets/js/model.js', 'assets/js/lattice.js', 'assets/js/map.js', 'assets/js/app.js', 'assets/js/reference.js']);
 const types = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8' };
 http.createServer((req, res) => {
   const name = new URL(req.url, 'http://localhost').pathname.slice(1) || 'index.html';

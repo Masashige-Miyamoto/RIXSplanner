@@ -15,30 +15,31 @@
   });
   function validate(s, {scanRange=true}={}) {
     const positive=['energy','resonance','resonanceWidth','a','b','c','resolution','phonon','magnon','dd','intrinsic','dwell'];
-    for(const key of Object.keys(defaults)) if(typeof defaults[key]==='number' && !Number.isFinite(s[key])) throw Error(key+' は有限の数値で入力してください。');
-    for(const key of positive) if(s[key]<=0) throw Error(key+' は 0 より大きい値にしてください。');
-    if(s.resolution<1||s.resolution>2000) throw Error('分解能は 1–2,000 meV です。');
-    for(const key of ['resonanceWidth','phonon','magnon','dd','intrinsic']) if(s[key]<0.001||s[key]>100) throw Error(key+' は 0.001–100 eV です。');
-    if(Math.abs(s.azimuth)>360) throw Error('方位角は −360°〜360° で入力してください。');
-    if(Math.abs(s.tilt)>85) throw Error('tilt は −85°〜85° で入力してください。');
-    if(!['scattering','l'].includes(s.angleMode)||![-1,1].includes(s.lockBranch)) throw Error('入射角の固定モードが不正です。');
-    if(s.dwell<0.1||s.dwell>1e7) throw Error('露光時間は 0.1–10,000,000 秒 / 点です。');
-    if(s.energy<20||s.energy>30000||s.resonance>30000) throw Error('光子エネルギーは 20–30,000 eV、共鳴中心は 30,000 eV 以下です。');
-    if(s.scattering<=0||s.scattering>180) throw Error('散乱角 2θ は 0° より大きく 180° 以下です。');
-    for(const [key,label] of (scanRange?[['incidence','入射角'],['start','スキャン開始角'],['end','スキャン終了角']]:[['incidence','入射角']])) {
-      if(s[key]<=0||s[key]>=180||s.scattering-s[key]<=0||s.scattering-s[key]>=180) throw Error(label+' は 0° < α < 2θ、0° < β = 2θ − α < 180° を満たす必要があります。');
+    for(const key of Object.keys(defaults)) if(typeof defaults[key]==='number' && !Number.isFinite(s[key])) throw Error(key+" must be a finite number.");
+    for(const key of positive) if(s[key]<=0) throw Error(key+" must be positive.");
+    if(s.resolution<1||s.resolution>2000) throw Error("Resolution must be 1–2,000 meV.");
+    for(const key of ['resonanceWidth','phonon','magnon','dd','intrinsic']) if(s[key]<0.001||s[key]>100) throw Error(key+" must be 0.001–100 eV.");
+    if(Math.abs(s.azimuth)>360) throw Error("Azimuth must be between −360° and 360°.");
+    if(Math.abs(s.tilt)>85) throw Error("Tilt must be between −85° and 85°.");
+    if(!['scattering','l'].includes(s.angleMode)||![-1,1].includes(s.lockBranch)) throw Error("Invalid incidence control mode.");
+    if(s.dwell<0.1||s.dwell>1e7) throw Error("Exposure must be 0.1–10,000,000 seconds per point.");
+    if(s.energy<20||s.energy>30000||s.resonance>30000) throw Error("Photon energy must be 20–30,000 eV and resonance energy at most 30,000 eV.");
+    if(s.scattering<=0||s.scattering>180) throw Error("Scattering angle 2θ must be greater than 0° and at most 180°.");
+    for(const [key,label] of (scanRange&&s.angleMode!=='l'?[['incidence',"Incidence angle"],['start',"Scan start angle"],['end',"Scan end angle"]]:[['incidence',"Incidence angle"]])) {
+      if(s[key]<=0||s[key]>=180||s.scattering-s[key]<=0||s.scattering-s[key]>=180) throw Error(label+" must satisfy 0° < α < 2θ and 0° < β = 2θ − α < 180°.");
     }
-    if(scanRange&&s.start>s.end) throw Error('スキャン開始角は終了角以下にしてください。');
-    if(scanRange&&(s.hStep<0.000001||s.hStep>10)) throw Error('ΔH は 0.000001–10 r.l.u. で入力してください。');
-    if(s.loss<0||s.loss>=s.energy) throw Error('運動量計算の損失は 0 ≤ ΔE < 入射光子エネルギーです。');
-    if(s.lossMin>=s.lossMax||s.lossMax>=s.energy||s.lossMax-s.lossMin>100) throw Error('スペクトル範囲は最小 < 最大 < 入射エネルギー、幅 100 eV 以下です。');
-    if(s.lossMin < -10) throw Error('損失エネルギーの下限は −10 eV です。');
-    if(Math.min(s.a,s.b,s.c)<0.1||Math.max(s.a,s.b,s.c)>1000) throw Error('格子定数は 0.1–1,000 Å です。');
-    for(const key of ['elasticWeight','phononWeight','magnonWeight','ddWeight']) if(s[key]<0||s[key]>100) throw Error('ピークの積分重みは 0–100 です。');
-    if(!Object.hasOwn(CENTERINGS,s.lattice)) throw Error('結晶系が不正です。');
-    if(!CENTERINGS[s.lattice].includes(s.centering)) throw Error('結晶系に対応する格子の中心化を選んでください。');
-    if(![2,3].includes(s.dimension)||!['xz','xy','zy'].includes(s.projection)||!['angstrom','rlu'].includes(s.units)) throw Error('表示設定が不正です。');
+    if(scanRange&&s.start>s.end) throw Error("Scan start must not exceed scan end.");
+    if(scanRange&&(s.hStep<0.000001||s.hStep>10)) throw Error("ΔH must be 0.000001–10 r.l.u.");
+    if(s.loss<0||s.loss>=s.energy) throw Error("Momentum loss must satisfy 0 ≤ ΔE < incident photon energy.");
+    if(s.lossMin>=s.lossMax||s.lossMax>=s.energy||s.lossMax-s.lossMin>100) throw Error("Spectrum limits must satisfy min < max < incident energy, with a span at most 100 eV.");
+    if(s.lossMin < -10) throw Error("The minimum energy loss is −10 eV.");
+    if(Math.min(s.a,s.b,s.c)<0.1||Math.max(s.a,s.b,s.c)>1000) throw Error("Lattice constants must be 0.1–1,000 Å.");
+    for(const key of ['elasticWeight','phononWeight','magnonWeight','ddWeight']) if(s[key]<0||s[key]>100) throw Error("Integrated peak weights must be 0–100.");
+    if(!Object.hasOwn(CENTERINGS,s.lattice)) throw Error("Invalid crystal system.");
+    if(!CENTERINGS[s.lattice].includes(s.centering)) throw Error("Select a centering compatible with the crystal system.");
+    if(![2,3].includes(s.dimension)||!['xz','xy','zy'].includes(s.projection)||!['angstrom','rlu'].includes(s.units)) throw Error("Invalid display settings.");
     crystal(s);
+    if(scanRange&&s.angleMode==='l')checkLockedRange(s);
     return s;
   }
   const CENTERINGS={cubic:['P','I','F'],tetragonal:['P','I'],orthorhombic:['P','C','I','F'],hexagonal:['P','R'],rhombohedral:['R'],monoclinic:['P','C'],triclinic:['P']};
@@ -71,7 +72,7 @@
     const parallel=ki*Math.cos(ai)-kf*Math.cos(bo), normal=-ki*Math.sin(ai)-kf*Math.sin(bo);
     // Rz(phi) Rx(tilt): at phi=0, positive tilt sends inward qz toward +qy/K.
     const q=[parallel*Math.cos(p)+normal*Math.sin(t)*Math.sin(p),parallel*Math.sin(p)-normal*Math.sin(t)*Math.cos(p),normal*Math.cos(t)];
-    return {q,hkl:fractional(q,s),parallel,normal:q[2],planeNormal:normal,magnitude:Math.hypot(...q),ki,kf,beta:s.scattering-incidence,incidence};
+    return {q,hkl:fractional(q,s),parallel,normal:q[2],planeNormal:normal,magnitude:Math.hypot(...q),ki,kf,beta:s.scattering-incidence,incidence,scattering:s.scattering};
   }
   function lockCoefficients(s){
     const p=s.azimuth*RAD,t=s.tilt*RAD,c=crystal(s).coordinateBasis[2];
@@ -79,34 +80,82 @@
   }
   function captureL(s){const {a,b}=lockCoefficients(s),beta=(s.scattering-s.incidence)*RAD;return {lockedL:momentum(s).hkl[2],lockBranch:-a*Math.sin(beta)+b*Math.cos(beta)<0?-1:1};}
   function solveScattering(s,incidence){
-    if(!Number.isFinite(incidence)||incidence<=0||incidence>=180)throw Error('入射角は 0° より大きく 180° 未満にしてください。');
+    if(!Number.isFinite(incidence)||incidence<=0||incidence>=180)throw Error("Incidence must be greater than 0° and less than 180°.");
     const {a,b}=lockCoefficients(s),r=Math.hypot(a,b),ki=s.energy/HBARC,kf=(s.energy-s.loss)/HBARC,alpha=incidence*RAD;
-    if(!(r>1e-12&&kf>0))throw Error('この配置では L 固定の散乱角を計算できません。');
+    if(!(r>1e-12&&kf>0))throw Error("Cannot solve a fixed-L scattering angle for this geometry.");
     const value=(ki*(a*Math.cos(alpha)-b*Math.sin(alpha))-s.lockedL)/(kf*r);
-    if(Math.abs(value)>1+1e-10)throw Error('指定した入射角では L を維持できません。');
+    if(Math.abs(value)>1+1e-10)throw Error("L cannot be maintained at the requested incidence.");
     const phase=Math.atan2(b,a),delta=Math.acos(Math.max(-1,Math.min(1,value))),candidates=[];
     for(const sign of [-1,1])for(let n=-1;n<=1;n++){
       const beta=phase+sign*delta+2*Math.PI*n,scattering=incidence+beta/RAD,derivative=-a*Math.sin(beta)+b*Math.cos(beta);
       if(beta>1e-8&&beta<Math.PI-1e-8&&scattering<=180+1e-8&&(Math.abs(derivative)<1e-9||Math.sign(derivative)===s.lockBranch))candidates.push(Math.min(180,scattering));
     }
-    if(!candidates.length)throw Error('同じ出射枝で L を固定できる角度範囲を超えています。');
+    if(!candidates.length)throw Error("The requested angle is outside the fixed-L range on the same outgoing branch.");
     return candidates.sort((a,b)=>Math.abs(a-s.scattering)-Math.abs(b-s.scattering))[0];
+  }
+  function scanGeometry(s,incidence){return {...s,incidence,scattering:s.angleMode==='l'?solveScattering(s,incidence):s.scattering};}
+  function scanPoint(s,incidence){return momentum(scanGeometry(s,incidence));}
+  // Exact boundaries of the feasible fixed-L branch: outgoing tangency,
+  // beta=0/pi, and 2theta=pi. Midpoints classify the intervals between them.
+  function scanLimits(s){
+    if(s.angleMode!=='l')return {min:.1,max:Math.max(.1,s.scattering-.1)};
+    const {a,b}=lockCoefficients(s),ki=s.energy/HBARC,kf=(s.energy-s.loss)/HBARC,r=Math.hypot(a,b),cuts=[0,180];
+    if(!(r>1e-12&&kf>0))throw Error('Cannot solve a fixed-L scattering angle for this geometry.');
+    const phase=Math.atan2(-b,a),roots=value=>{
+      const ratio=value/(ki*r);if(Math.abs(ratio)>1+1e-12)return;
+      const delta=Math.acos(Math.max(-1,Math.min(1,ratio)));
+      for(const sign of [-1,1])for(let n=-1;n<=1;n++){const alpha=(phase+sign*delta+2*Math.PI*n)/RAD;if(alpha>0&&alpha<180)cuts.push(alpha);}
+    };
+    for(const value of [s.lockedL-kf*r,s.lockedL+kf*r,s.lockedL-kf*a,s.lockedL+kf*a,ki*s.lockedL/(ki+kf)])roots(value);
+    cuts.sort((x,y)=>x-y);const unique=cuts.filter((v,i)=>!i||v-cuts[i-1]>1e-8),intervals=[];
+    const feasible=angle=>{try{solveScattering(s,angle);return true;}catch{return false;}};
+    for(let i=1;i<unique.length;i++){
+      const min=unique[i-1],max=unique[i];if(!feasible((min+max)/2))continue;
+      const last=intervals.at(-1);if(last&&Math.abs(last.max-min)<1e-8&&feasible(min))last.max=max;else intervals.push({min,max});
+    }
+    const range=intervals.find(v=>s.incidence>=v.min-1e-8&&s.incidence<=v.max+1e-8);
+    if(!range){if(feasible(s.incidence))return {min:s.incidence,max:s.incidence};throw Error('No continuous fixed-L scan range contains the current incidence.');}
+    // Move excluded grazing endpoints inside the domain; retain valid 180° scattering endpoints.
+    const inset=Math.min(1e-5,(range.max-range.min)/4);
+    return {min:feasible(range.min)?range.min:range.min+inset,max:feasible(range.max)?range.max:range.max-inset};
+  }
+  function checkLockedRange(s){
+    const range=scanLimits(s);
+    if(s.start>s.end||s.start<range.min-1e-8||s.end>range.max+1e-8)throw Error('Scan angles must stay inside the available fixed-L range.');
+    solveScattering(s,s.start);solveScattering(s,s.end);return range;
+  }
+  function lockedScan(s){
+    checkLockedRange(s);const first=scanPoint(s,s.start);if(s.start===s.end)return [first];
+    if(!Number.isFinite(s.hStep)||s.hStep<=0)throw Error('ΔH must be positive and finite.');
+    const last=scanPoint(s,s.end),h0=first.hkl[0],h1=last.hkl[0],span=Math.abs(h1-h0),direction=Math.sign(h1-h0);
+    if(span<1e-10)throw Error('H is constant in this geometry. Change azimuth or tilt, or set equal start and end angles.');
+    if(1+Math.ceil(span/s.hStep)>2001)throw Error('The scan exceeds 2,001 points. Increase ΔH or narrow the range.');
+    // On one physical outgoing branch (0 < 2theta <= pi), q lies on a
+    // straight fixed-L line and H is monotonic, or constant. Invert H directly.
+    const points=[first];
+    for(let step=1;step*s.hStep<span-1e-10;step++){
+      const target=h0+direction*step*s.hStep;let lo=points.at(-1).incidence,hi=s.end;
+      for(let iteration=0;iteration<55;iteration++){const mid=(lo+hi)/2,p=scanPoint(s,mid);if(direction*(p.hkl[0]-target)<0)lo=mid;else hi=mid;}
+      points.push(scanPoint(s,(lo+hi)/2));
+    }
+    points.push(last);return points;
   }
   function hCoefficients(s){return [momentum(s,0).hkl[0],momentum(s,90).hkl[0]];}
   function scan(s) {
+    if(s.angleMode==='l')return lockedScan(s);
     if(s.start===s.end)return [momentum(s,s.start)];
-    if(!Number.isFinite(s.hStep)||s.hStep<=0)throw Error('ΔH は正の有限値にしてください。');
+    if(!Number.isFinite(s.hStep)||s.hStep<=0)throw Error("ΔH must be positive and finite.");
     const [c,d]=hCoefficients(s),radius=Math.hypot(c,d),phase=Math.atan2(d,c),lo=s.start*RAD,hi=s.end*RAD;
-    if(radius<1e-10)throw Error('この配置では H が変化しません。方位角・tilt を変更するか、開始角と終了角を同じにしてください。');
+    if(radius<1e-10)throw Error("H is constant in this geometry. Change azimuth or tilt, or set equal start and end angles.");
     const cuts=[lo,hi];for(let n=-2;n<=2;n++){const angle=phase+n*Math.PI;if(angle>lo+1e-10&&angle<hi-1e-10)cuts.push(angle);}cuts.sort((a,b)=>a-b);
     const H=angle=>c*Math.cos(angle)+d*Math.sin(angle),angles=[lo];
     for(let segment=1;segment<cuts.length;segment++){
       const a=cuts[segment-1],b=cuts[segment],ha=H(a),hb=H(b),span=Math.abs(hb-ha),direction=Math.sign(hb-ha);
-      if(angles.length+Math.ceil(span/s.hStep)>2001)throw Error('測定点が 2,001 点を超えます。ΔH を大きくするか範囲を狭めてください。');
+      if(angles.length+Math.ceil(span/s.hStep)>2001)throw Error("The scan exceeds 2,001 points. Increase ΔH or narrow the range.");
       for(let step=1;step*s.hStep<span-1e-10;step++){
         const target=ha+direction*step*s.hStep,delta=Math.acos(Math.max(-1,Math.min(1,target/radius)));let solved=null;
         for(const sign of [-1,1])for(let n=-2;n<=2;n++){const v=phase+sign*delta+n*2*Math.PI;if(v>=a-1e-10&&v<=b+1e-10)solved=Math.max(a,Math.min(b,v));}
-        if(solved===null)throw Error('H ステップに対応する角度を求められませんでした。');angles.push(solved);
+        if(solved===null)throw Error("Could not solve the angle for the requested H step.");angles.push(solved);
       }
       angles.push(b);
     }
@@ -153,10 +202,11 @@
     const mesh=zoneMesh(s),basis=reciprocal(s),nearest=G.nearestSolver(basis);
     const distances=mesh.faces.map(f=>{for(let i=1;i<f.length-1;i++){const v=G.cross(G.sub(f[i],f[0]),G.sub(f[i+1],f[0])),n=G.norm(v);if(n>1e-15)return Math.abs(G.dot(f[0],v)/n);}return Infinity;});
     const distance=Math.min(...distances);
-    const arc=(s.end-s.start)*RAD*(2*s.energy-s.loss)/HBARC;
+    const ends=s.angleMode==='l'?[scanPoint(s,s.start).q,scanPoint(s,s.end).q]:null;
+    const arc=ends?G.norm(G.sub(ends[1],ends[0])):(s.end-s.start)*RAD*(2*s.energy-s.loss)/HBARC;
     const required=s.start===s.end?1:Math.max(points.length,Math.ceil(arc/Math.max(distance*.4,1e-8))+1),count=Math.min(4097,required);
     const samples=[momentum(s).q,...points.map(p=>p.q)];
-    if(count>1)for(let i=0;i<count;i++)samples.push(momentum(s,s.start+(s.end-s.start)*i/(count-1)).q);
+    if(count>1)for(let i=0;i<count;i++)samples.push(ends?ends[0].map((v,j)=>v+(ends[1][j]-v)*i/(count-1)):scanPoint(s,s.start+(s.end-s.start)*i/(count-1)).q);
     let truncated=required>4097;const seen=new Set(['0,0,0']);
     for(const point of samples){const center=nearest(point).shift,key=center.map(v=>Math.round(v*1e8)).join(',');if(seen.has(key))continue;if(centers.length>=256){truncated=true;continue;}seen.add(key);centers.push(center);}
     return {centers,truncated,samples:count};
@@ -168,7 +218,7 @@
     return Math.exp(-0.5*((x-center)/sigma)**2)/(sigma*Math.sqrt(2*Math.PI));
   }
   function peaks(s,incidence=s.incidence) {
-    const {hkl}=momentum(s,incidence,0), h=hkl[0],k=hkl[1];
+    const {hkl}=momentum(scanGeometry(s,incidence),incidence,0), h=hkl[0],k=hkl[1];
     // Deliberately a generic periodic dispersion, not a material-specific spin model.
     const dispersion=Math.sqrt((Math.sin(Math.PI*h)**2+Math.sin(Math.PI*k)**2)/2);
     const width=s.resolution/1000;
@@ -189,17 +239,17 @@
     });
   }
   function heatmap(s,columns=101,rows=180) {
-    const data=[],angles=[];
+    const data=[],angles=[],scatterings=[];
     for(let x=0;x<columns;x++) {
-      const angle=s.start+(s.end-s.start)*x/(columns-1);angles.push(angle);data.push(spectrum(s,angle,rows));
+      const angle=s.start+(s.end-s.start)*x/(columns-1);angles.push(angle);scatterings.push(scanGeometry(s,angle).scattering);data.push(spectrum(s,angle,rows));
     }
-    return {data,angles,columns,rows,max:Math.max(1e-30,...data.map(col=>Math.max(...col.map(v=>v.intensity))))};
+    return {data,angles,scatterings,columns,rows,max:Math.max(1e-30,...data.map(col=>Math.max(...col.map(v=>v.intensity))))};
   }
   function sanitize(raw) {
-    if(!raw||typeof raw!=='object'||Array.isArray(raw)) throw Error('設定は JSON オブジェクトで指定してください。');
+    if(!raw||typeof raw!=='object'||Array.isArray(raw)) throw Error("Settings must be a JSON object.");
     const s={...defaults};
     for(const key of Object.keys(s)) if(Object.hasOwn(raw,key)) {
-      if(typeof raw[key]!==typeof s[key]) throw Error(key+' のデータ型が不正です。');
+      if(typeof raw[key]!==typeof s[key]) throw Error(key+" has an invalid data type.");
       s[key]=raw[key];
     }
     if(raw.projection==='3d'){s.dimension=3;s.projection='xz';}else if(raw.projection==='yz')s.projection='zy';
@@ -207,9 +257,9 @@
       if(raw.points===1)s.end=s.start;
       else s.hStep=Math.max(.000001,Math.min(10,Math.abs(momentum(s,s.end).hkl[0]-momentum(s,s.start).hkl[0])/(raw.points-1)));
     }
-    validate(s,{scanRange:false});if(s.angleMode==='l'&&Math.abs(momentum(s).hkl[2]-s.lockedL)>1e-7)throw Error('保存された L 固定条件が現在の配置と一致しません。');return s;
+    validate(s,{scanRange:false});if(s.angleMode==='l'&&Math.abs(momentum(s).hkl[2]-s.lockedL)>1e-7)throw Error("The saved fixed-L target does not match the current geometry.");return s;
   }
-  const api={HBARC,RAD,defaults,CENTERINGS,validate,cell,crystal,reciprocal,fractional,momentum,captureL,solveScattering,hCoefficients,scan,basalZone,project,zoneProjection,zoneMesh,occupiedZones,displayVector,displayReadout,convexHull,gaussian,peaks,resonanceFactor,spectrum,heatmap,sanitize};
+  const api={HBARC,RAD,defaults,CENTERINGS,validate,cell,crystal,reciprocal,fractional,momentum,captureL,solveScattering,scanGeometry,scanPoint,scanLimits,hCoefficients,scan,basalZone,project,zoneProjection,zoneMesh,occupiedZones,displayVector,displayReadout,convexHull,gaussian,peaks,resonanceFactor,spectrum,heatmap,sanitize};
   if(typeof module!=='undefined')module.exports=api;
   root.RIXS=api;
 })(typeof globalThis!=='undefined'?globalThis:this);

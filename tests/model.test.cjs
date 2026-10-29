@@ -153,11 +153,41 @@ test('H stepping covers a turning point without duplicate angles and respects ea
   }
 });
 test('constant H and excessive density produce useful scan errors',()=>{
-  assert.throws(()=>M.scan(s({azimuth:90})),/H が変化しません/);
+  assert.throws(()=>M.scan(s({azimuth:90})),/H is constant/);
   assert.throws(()=>M.scan(s({hStep:.000001})),/2,001/);
   assert.equal(M.scan(s({azimuth:90,start:20,end:20})).length,1);
 });
 test('legacy dimension, plane and point-count settings migrate to H steps',()=>{
   const migrated=M.sanitize({projection:'3d',points:81});assert.equal(migrated.dimension,3);assert.equal(migrated.projection,'xz');assert.equal(M.scan(migrated).length,81);
   const single=M.sanitize({projection:'yz',points:1});assert.equal(single.projection,'zy');assert.equal(single.end,single.start);assert.equal(M.scan(single).length,1);
+});
+
+
+test('fixed-L scans preserve L and H spacing over both outgoing branches and skew lattices',()=>{
+  for(const options of [{},{tilt:35,azimuth:40},{lattice:'triclinic',alpha:75,beta:80,gamma:100,tilt:-25,azimuth:30},{lattice:'rhombohedral',centering:'R',alpha:78,azimuth:40}])for(const incidence of [25,100]){
+    const state=s({...options,incidence,angleMode:'l'});Object.assign(state,M.captureL(state));const range=M.scanLimits(state);state.start=range.min;state.end=range.max;
+    assert.ok(range.min<=incidence&&range.max>=incidence);M.validate(state);const points=M.scan(state);assert.ok(points.length>1);
+    for(let i=0;i<points.length;i++){
+      const p=points[i];close(p.hkl[2],state.lockedL,1e-9);close(p.scattering,p.incidence+p.beta);assert.ok(p.scattering<=180&&p.beta>0);
+      if(i>0&&i<points.length-1)close(Math.abs(p.hkl[0]-points[i-1].hkl[0]),state.hStep,1e-9);
+    }
+    close(points[0].incidence,state.start);close(points.at(-1).incidence,state.end);assert.ok(Math.abs(points[0].scattering-points.at(-1).scattering)>1);
+    for(let i=0;i<=100;i++){const p=M.scanPoint(state,range.min+(range.max-range.min)*i/100);close(p.hkl[2],state.lockedL,1e-9);}
+    assert.throws(()=>M.scan({...state,end:Math.min(179.99,range.max+.01)}),/fixed-L range/);
+  }
+});
+test('fixed-L special cases reject constant H and excessive points, and permit a single point',()=>{
+  const state=s({angleMode:'l',azimuth:90});Object.assign(state,M.captureL(state));const range=M.scanLimits(state);state.start=range.min;state.end=range.max;
+  assert.throws(()=>M.scan(state),/H is constant/);assert.equal(M.scan({...state,start:25,end:25}).length,1);
+  state.azimuth=0;Object.assign(state,M.captureL(state));assert.throws(()=>M.scan({...state,hStep:.000001}),/2,001/);
+});
+test('fixed-L heatmap uses each incidence scattering angle for the elastic dispersion approximation',()=>{
+  const state=s({angleMode:'l',tilt:30,loss:5});Object.assign(state,M.captureL(state));const range=M.scanLimits(state);state.start=range.min;state.end=range.max;
+  const hm=M.heatmap(state,7,31);
+  for(let x=0;x<hm.columns;x++){const incidence=hm.angles[x],scattering=hm.scatterings[x],fixed={...state,angleMode:'scattering',incidence,scattering};close(M.momentum(fixed).hkl[2],state.lockedL);assert.deepEqual(hm.data[x],M.spectrum(fixed,incidence,31));}
+});
+test('nearby BZ lookup follows the fixed-L line even with sparse measurement points',()=>{
+  const G=require('../assets/js/lattice.js'),state=s({angleMode:'l',tilt:20,a:15,b:15,c:20,allZones:true,hStep:10});Object.assign(state,M.captureL(state));const range=M.scanLimits(state);state.start=range.min;state.end=range.max;
+  const zones=M.occupiedZones(state),nearest=G.nearestSolver(M.reciprocal(state));assert.ok(zones.centers.length>1);
+  for(let i=0;i<=200;i++){const p=M.scanPoint(state,state.start+(state.end-state.start)*i/200).q,center=nearest(p).shift;assert.ok(zones.centers.some(v=>G.norm(G.sub(v,center))<1e-8));}
 });

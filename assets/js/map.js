@@ -2,7 +2,7 @@
  * pointing and touch gestures never alter the scientific coordinates. */
 (function(root){
   'use strict';
-  const M=root.RIXS,NS='http://www.w3.org/2000/svg',W=900,H=460;
+  const M=root.RIXS,t=root.RIXSI18n.t,NS='http://www.w3.org/2000/svg',W=900,H=460;
   // Turntable camera: positive K (qy in Å⁻¹) remains screen-up. Stop short
   // of the poles so the vertical axis neither disappears nor flips over.
   const MAX_PITCH=85*Math.PI/180;
@@ -17,6 +17,19 @@
     const x=Math.cos(yaw)*v[0]-Math.sin(yaw)*v[2],d=Math.sin(yaw)*v[0]+Math.cos(yaw)*v[2];
     return [x,Math.cos(pitch)*v[1]-Math.sin(pitch)*d,Math.cos(pitch)*d+Math.sin(pitch)*v[1]];
   }
+  // Project onto the visible back panes, then draw a crosshair on each pane,
+  // following the ARPES planner cursor. All endpoints stay in displayed coordinates.
+  function projectionGuides(point,min,max,yaw,pitch){
+    const segments=[];
+    for(let axis=0;axis<3;axis++){
+      const unit=[0,0,0];unit[axis]=1;const eye=camera(unit,yaw,pitch)[2];
+      if(Math.abs(eye)<1e-8)continue;
+      const foot=point.slice();foot[axis]=eye>=0?min[axis]:max[axis];
+      segments.push({a:point.slice(),b:foot,kind:'spike',axis});
+      for(let along=0;along<3;along++)if(along!==axis){const a=foot.slice(),b=foot.slice();a[along]=min[along];b[along]=max[along];segments.push({a,b,kind:'projection',axis});}
+    }
+    return segments;
+  }
   class MomentumMap{
     constructor(svg,tooltip,onSelect){
       this.svg=svg;this.tooltip=tooltip;this.onSelect=onSelect;this.points=[];this.touches=new Map();this.reset(false);this.mode='rotate';this.bind();
@@ -30,7 +43,7 @@
       this.state={...s};this.scan=scan;this.mesh=M.zoneMesh(s);this.zones=s.showBZ?M.occupiedZones(scan.length?s:{...s,start:s.incidence,end:s.incidence},scan):{centers:[],truncated:false};
       this.tooltip.hidden=true;this.draw();return this.zones;
     }
-    clear(){this.state=null;this.points=[];this.svg.replaceChildren();this.tooltip.hidden=true;text(this.svg,[450,200],'入力条件を確認してください','#ff9aaa',15);}
+    clear(){this.state=null;this.points=[];this.svg.replaceChildren();this.tooltip.hidden=true;text(this.svg,[450,200],t("Check the input conditions"),'#ff9aaa',15);}
     setMode(mode){this.mode=mode;this.svg.setAttribute('data-drag-mode',mode);}
     zoomBy(factor){this.zoom=Math.max(.2,Math.min(20,this.zoom*factor));this.draw();}
     coordinates(e){const r=this.svg.getBoundingClientRect(),s=Math.min(r.width/W,r.height/H);return[(e.clientX-r.left-(r.width-W*s)/2)/s,(e.clientY-r.top-(r.height-H*s)/2)/s];}
@@ -73,6 +86,10 @@
       this.points=projected.map((p,index)=>({x:p[0],y:p[1],depth:p[2],index})).sort((a,b)=>a.depth-b.depth);
       for(const p of this.points)add(g,'circle',{cx:p.x,cy:p.y,r:points.length>150?2:3,fill:color(p.index/Math.max(1,points.length-1)),stroke:'#0d1d22','stroke-width':.6,'data-scan-index':p.index});
       const active=project(current);
+      if(is3d){
+        const guides=add(g,'g',{'data-current-hairlines':'','pointer-events':'none','aria-hidden':'true'});
+        for(const segment of projectionGuides(current,minimum,maximum,this.yaw,this.pitch))line(guides,project(segment.a),project(segment.b),'#ffb45d',segment.kind==='spike'?1.25:1,{'stroke-dasharray':'4 4',opacity:segment.kind==='spike'?.85:.55,'data-guide-kind':segment.kind,'data-guide-axis':segment.axis,'data-from':segment.a.join(','),'data-to':segment.b.join(',')});
+      }
       if(!is3d){const zero=project([0,0,0]);line(g,active,[active[0],zero[1]],'#ffb45d',1,{'stroke-dasharray':'3 5',opacity:.45});line(g,active,[zero[0],active[1]],'#ffb45d',1,{'stroke-dasharray':'3 5',opacity:.45});}
       add(g,'circle',{cx:active[0],cy:active[1],r:9,fill:'#ffb45d15',stroke:'#ffb45d',opacity:.8});add(g,'circle',{cx:active[0],cy:active[1],r:4,fill:'#ffb45d',stroke:'#071216','stroke-width':1.5});
       if(is3d){
@@ -135,5 +152,5 @@
       });
     }
   }
-  root.RIXSMap={MomentumMap,camera};
+  root.RIXSMap={MomentumMap,camera,projectionGuides};
 })(typeof window!=='undefined'?window:globalThis);
