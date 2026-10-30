@@ -93,7 +93,15 @@
     return next;
   }
   function updateFromInputs(e){
-    const previousDimension=state.dimension,previousLattice=state.lattice;state=readInputs();syncLattice();
+    const previousDimension=state.dimension,previousLattice=state.lattice,previousUnits=state.units;state=readInputs();syncLattice();
+    if(previousUnits!==state.units)try{
+      // Convert the selected Cartesian component increment with the same
+      // coordinate transform used by the map (other components held fixed).
+      const direction=[0,0,0];direction[state.scanComponent]=1;
+      const scale=M.fractional(direction,state)[state.scanComponent];
+      state.hStep*=state.units==='rlu'?scale:1/scale;
+      $('hStep').value=state.hStep;
+    }catch{/* Validation reports incomplete lattice inputs. */}
     if(previousLattice!==state.lattice)document.querySelector('[data-cell-details]')?.setAttribute('open','');
     const geometryChanged=['scanAxis','angleMode','energy','scattering','azimuth','tilt','loss','lattice','centering','a','b','c','alpha','beta','gamma'].includes(e?.target?.id);
     if(e?.target?.id==='angleMode'||geometryChanged&&e?.target?.id!=='scanAxis')try{if(state.angleMode==='l')Object.assign(state,M.captureL(state));if(state.angleMode==='hk')Object.assign(state,M.captureHK(state));}catch{/* Validation reports incomplete lattice inputs. */}

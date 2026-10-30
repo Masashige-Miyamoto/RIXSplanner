@@ -169,12 +169,12 @@ test('scan-only errors retain live geometry, spectrum and L-locked controls',asy
   await h.input('hStep',.02);assert.equal(h.$('scanError').hidden,true);
 });
 test('CSV includes tilt, derived timing and momentum steps in map units',async()=>{
-  const h=harness();await h.input('tilt',25);await h.input('hStep',.025);await h.input('units','rlu');await h.$('scanDownload').click();
+  const h=harness();await h.input('tilt',25);await h.input('units','rlu');await h.input('hStep',.025);await h.$('scanDownload').click();
   const csv=await h.downloads[0].blob.text(),lines=csv.split('\n').filter(l=>!l.startsWith('#')),rows=lines.slice(1).map(l=>l.split(',').map(Number));
   assert.equal(+h.$('pointCount').textContent,rows.length);assert.equal(h.$('scanTime').textContent,(rows.length*30/60).toFixed(1)+' min');
   for(let i=1;i<rows.length-1;i++)assert.ok(Math.abs(Math.abs(rows[i][11]-rows[i-1][11])-.025)<1e-10);
   assert.ok(rows.every(row=>row[16]===25&&row[12]>0));
-  const count=rows.length;await h.input('units','angstrom');assert.notEqual(+h.$('pointCount').textContent,count);await h.$('scanDownload').click();const physical=(await h.downloads.at(-1).blob.text()).split('\n').filter(l=>!l.startsWith('#')).slice(1).map(l=>l.split(',').map(Number));for(let i=1;i<physical.length-1;i++)assert.ok(Math.abs(Math.abs(physical[i][6]-physical[i-1][6])-.025)<1e-10);assert.equal(physical[0][14],.5);
+  const count=rows.length;await h.input('units','angstrom');assert.equal(+h.$('pointCount').textContent,count);const physicalStep=.025*2*Math.PI/3.85;assert.ok(Math.abs(+h.$('hStep').value-physicalStep)<1e-12);await h.$('scanDownload').click();const physical=(await h.downloads.at(-1).blob.text()).split('\n').filter(l=>!l.startsWith('#')).slice(1).map(l=>l.split(',').map(Number));for(let i=1;i<physical.length-1;i++)assert.ok(Math.abs(Math.abs(physical[i][6]-physical[i-1][6])-physicalStep)<1e-10);assert.equal(physical[0][14],.5);
 });
 
 
@@ -330,4 +330,35 @@ test('alpha changes reuse scan calculation, measurement rows, reference rows and
   assert.equal(scans,0);assert.equal(heatmaps,1);assert.equal(h.$('scanPoints').children[0],first);assert.equal(h.$('edgeTable').children[0],reference);
   await h.input('scattering',140);assert.equal(scans,1);assert.equal(heatmaps,2);assert.notEqual(h.$('scanPoints').children[0],first);
   await h.input('incidence',-1);await h.input('incidence',30);assert.equal(h.$('error').hidden,true);assert.equal(h.$('scanPoints').children.length,+h.$('pointCount').textContent);
+});
+
+
+test('unit dropdown converts the scan step for each component and persists the converted value',async()=>{
+  for(const scanRangeUnit of ['angle','momentum'])for(const component of [0,1,2]){
+    const h=harness(),state=()=>JSON.parse(h.storage.get('rixs-cut-planner.v1')).settings;
+    await h.input('lattice','orthorhombic');await h.input('a',4);await h.input('b',5);await h.input('c',12);
+    await h.input('scanComponent',component);await h.input('scanRangeUnit',scanRangeUnit);await h.input('hStep',.02);
+    const before=state(),count=+h.$('pointCount').textContent,expected=.02*[4,5,12][component]/(2*Math.PI);
+    await h.input('units','rlu');
+    assert.ok(Math.abs(+h.$('hStep').value-expected)<1e-12);
+    assert.equal(state().hStep,+h.$('hStep').value);assert.equal(state().start,before.start);assert.equal(state().end,before.end);
+    assert.equal(+h.$('pointCount').textContent,count);
+    await h.input('energy',950);assert.equal(state().hStep,+h.$('hStep').value);
+    const restored=harness(h.storage.get('rixs-cut-planner.v1'));assert.equal(+restored.$('hStep').value,expected);
+    await h.input('units','angstrom');assert.ok(Math.abs(+h.$('hStep').value-.02)<1e-12);
+    await h.input('hStep',.03);await h.input('units','rlu');
+    assert.ok(Math.abs(state().hStep-.03*[4,5,12][component]/(2*Math.PI))<1e-12);
+  }
+});
+
+test('step conversion uses the map coordinate transform for skew cells and is reversible',async()=>{
+  for(const component of [0,1,2]){
+    const h=harness(),state=()=>JSON.parse(h.storage.get('rixs-cut-planner.v1')).settings;
+    await h.input('lattice','triclinic');await h.input('alpha',75);await h.input('beta',80);await h.input('gamma',100);
+    await h.input('scanComponent',component);await h.input('hStep',.02);
+    const direction=[0,0,0];direction[component]=.02;
+    const expected=h.ctx.RIXS.fractional(direction,state())[component];
+    await h.input('units','rlu');assert.ok(Math.abs(state().hStep-expected)<1e-12);
+    await h.input('units','angstrom');assert.ok(Math.abs(state().hStep-.02)<1e-12);
+  }
 });
