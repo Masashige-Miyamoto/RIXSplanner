@@ -245,18 +245,18 @@ test('horizontal drag follows ARPES direction; hover draws and clears projection
   await svg.emit('pointerleave');assert.equal(svg.querySelector('[data-hover-hairlines]').children.length,0);assert.equal(h.$('mapTooltip').hidden,true);
   assert.match(fs.readFileSync(path.join(root,'assets/css/app.css'),'utf8'),/#momentumMap[^\n]+cursor:default/);
 });
-test('HK controls, momentum inversion, and scan table apply the same full geometry',async()=>{
+test('HK controls and scan table apply the same full geometry',async()=>{
   const h=harness(),state=()=>JSON.parse(h.storage.get('rixs-cut-planner.v1')).settings,M=h.ctx.RIXS;
-  await h.input('tilt',20);await h.input('azimuth',25);await h.input('angleMode','hk');assert.equal(h.$('scattering').disabled,true);assert.equal(h.$('incidenceComponent').value,'2');
-  const locked=[state().lockedH,state().lockedK];await h.input('incidenceUnit','rlu');const target=M.componentValue(state(),30,'incidence',2,'rlu');await h.input('incidence',target);assert.ok(Math.abs(state().incidence-30)<1e-5);
+  await h.input('tilt',20);await h.input('azimuth',25);await h.input('angleMode','hk');assert.equal(h.$('scattering').disabled,true);assert.equal(h.$('momentumComponent').value,'2');
+  const locked=[state().lockedH,state().lockedK];await h.input('incidence',30);assert.ok(Math.abs(state().incidence-30)<1e-5);
   const q=M.momentum(state());for(let i=0;i<2;i++)assert.ok(Math.abs(q.hkl[i]-locked[i])<1e-9);
   assert.equal(h.$('scanPoints').children.length,+h.$('pointCount').textContent);const first=h.$('scanPoints').children[0];const alpha=+first.children[1].textContent;await first.querySelector('button').click();assert.ok(Math.abs(state().incidence-alpha)<1e-5);
   await h.input('incidence',1000);assert.equal(h.$('angleError').hidden,false);assert.ok(Math.abs(state().incidence-alpha)<1e-5);
 });
-test('range units and step labels follow map units; scan axis and configuration reset maximum range',async()=>{
+test('range units and step labels follow map units; only a changed feasible width resets the range',async()=>{
   const h=harness(),state=()=>JSON.parse(h.storage.get('rixs-cut-planner.v1')).settings,M=h.ctx.RIXS;
   await h.input('start',20);await h.input('end',30);await h.input('scattering',130);assert.equal(state().start,.1);assert.equal(state().end,129.9);
-  await h.input('start',20);await h.input('incidence',35);assert.equal(state().start,.1);
+  await h.input('start',20);await h.input('incidence',35);assert.equal(state().start,20);
   await h.input('scanAxis','azimuth');assert.equal(state().start,-180);assert.equal(state().end,180);assert.equal(state().scanComponent,1);assert.match(h.$('stepLabel').textContent,/qᵧ.*Å⁻¹/);
   await h.input('scanRangeUnit','momentum');const target=M.componentValue(state(),-120);await h.input('start',target);assert.ok(Math.abs(state().start+120)<1e-5);assert.match(h.$('startLabel').textContent,/Å⁻¹/);
   await h.input('units','rlu');assert.match(h.$('startLabel').textContent,/r.l.u./);assert.match(h.$('stepLabel').textContent,/K.*r.l.u./);assert.ok(Math.abs(+h.$('start').value-M.componentValue(state(),state().start))<1e-9);
@@ -280,10 +280,54 @@ test('new controls and explanatory text switch languages and preserve all scan s
   const h=harness();await h.input('scanAxis','tilt');await h.input('scanRangeUnit','momentum');const saved=h.storage.get('rixs-cut-planner.v1');h.$('language').value='ja';await h.$('language').emit('change');assert.match(h.$('pointsTitle').textContent,/測定点/);assert.match(h.$('scanRangeNote').textContent,/最大範囲/);assert.match(h.$('startLabel').textContent,/開始/);assert.equal(h.storage.get('rixs-cut-planner.v1'),saved);
 });
 
-test('focused momentum input permits intermediate typing and normalizes only on blur',async()=>{
-  const h=harness();await h.input('incidenceUnit','rlu');h.document.activeElement=h.$('incidence');
-  await h.input('incidence','');assert.equal(h.$('incidence').value,'');assert.equal(h.$('angleError').hidden,false);
-  await h.input('incidence','0.2');assert.equal(h.$('incidence').value,'0.2');assert.equal(h.$('angleError').hidden,true);
-  const state=JSON.parse(h.storage.get('rixs-cut-planner.v1')).settings;assert.ok(Math.abs(h.ctx.RIXS.momentum(state).hkl[0]-.2)<1e-8);
-  h.document.activeElement=null;await h.$('incidence').emit('blur');assert.ok(Math.abs(+h.$('incidence').value-.2)<1e-8);
+test('momentum typing is deferred until Calculate and follows the main map units',async()=>{
+  const h=harness(),state=()=>JSON.parse(h.storage.get('rixs-cut-planner.v1')).settings,M=h.ctx.RIXS;
+  assert.equal(h.$('incidenceUnit'),null);assert.equal(h.$('incidenceComponent'),null);
+  assert.ok(h.$('momentumMap').parent.parent.querySelector('#showScan'));assert.equal(h.$('scanTitle').parent.parent.querySelector('#showScan'),null);
+  await h.input('start',20);await h.input('end',40);
+  const saved=h.storage.get('rixs-cut-planner.v1');h.document.activeElement=h.$('momentumTarget');
+  for(const value of ['', '-', '0.', '0.2']){await h.input('momentumTarget',value);assert.equal(h.storage.get('rixs-cut-planner.v1'),saved);assert.equal(h.$('momentumTarget').value,value);}
+  await h.$('calculateAngles').click();assert.equal(h.$('angleError').hidden,true);assert.ok(Math.abs(M.momentum(state()).q[0]-.2)<1e-8);
+  assert.equal(state().scattering,150);assert.equal(state().start,20);assert.equal(state().end,40);
+  await h.input('units','rlu');assert.equal(h.$('momentumTargetUnit').textContent,'r.l.u.');assert.equal(h.$('momentumComponent').children[0].textContent,'H');
+  await h.input('momentumTarget',.2);await h.$('calculateAngles').click();assert.ok(Math.abs(M.momentum(state()).hkl[0]-.2)<1e-8);
+  assert.equal(+h.$('incidence').value,state().incidence);
+  const before=state();await h.input('momentumTarget',1000);await h.$('calculateAngles').click();assert.equal(h.$('angleError').hidden,false);assert.deepEqual(state(),before);
+  await h.input('momentumTarget','');await h.$('calculateAngles').click();assert.match(h.$('angleError').textContent,/finite/);assert.deepEqual(state(),before);
+});
+test('momentum Calculate in both nonfixed modes updates alpha and 2theta while retaining phi and tilt',async()=>{
+  for(const angleMode of ['l','hk']){
+    const h=harness(),state=()=>JSON.parse(h.storage.get('rixs-cut-planner.v1')).settings,M=h.ctx.RIXS;
+    await h.input('azimuth',25);if(angleMode==='l')await h.input('tilt',20);
+    await h.input('angleMode',angleMode);await h.input('momentumComponent',angleMode==='hk'?2:0);
+    const before=state(),expected=M.geometryAt(before,'incidence',30),target=M.momentum(expected).q[state().momentumComponent];
+    await h.input('momentumTarget',target);assert.deepEqual(state(),before);await h.$('calculateAngles').click();
+    assert.equal(h.$('angleError').hidden,true);assert.ok(Math.abs(state().incidence-30)<1e-5);assert.notEqual(state().scattering,before.scattering);
+    assert.equal(state().azimuth,before.azimuth);assert.equal(state().tilt,before.tilt);
+    if(angleMode==='l')assert.ok(Math.abs(M.momentum(state()).hkl[2]-before.lockedL)<1e-8);
+    else{const p=M.momentum(state());assert.ok(Math.abs(p.hkl[0]-before.lockedH)<1e-8);assert.ok(Math.abs(p.hkl[1]-before.lockedK)<1e-8);}
+  }
+});
+test('custom scan endpoints survive changes that keep the available angular width',async()=>{
+  const h=harness(),state=()=>JSON.parse(h.storage.get('rixs-cut-planner.v1')).settings;
+  await h.input('start',20);await h.input('end',40);
+  for(const [id,value]of [['incidence',30],['incidenceRange',35],['azimuth',20],['tilt',10],['energy',950],['a',4],['loss',.5],['units','rlu'],['showScan',true]]){
+    await h.input(id,value);assert.equal(state().start,20,id);assert.equal(state().end,40,id);
+  }
+  // Selecting a reference changes energy, but not the fixed-2theta width.
+  await h.$('edgeTable').children[0].querySelector('button').click();assert.equal(state().start,20);assert.equal(state().end,40);
+  await h.input('scattering',130);assert.equal(state().start,.1);assert.equal(state().end,129.9);
+  await h.input('scanAxis','azimuth');await h.input('start',-50);await h.input('end',70);await h.input('azimuth',20);
+  // The full azimuth interval moved by zero (it was already centered on 20).
+  assert.equal(state().start,-50);assert.equal(state().end,70);
+});
+test('alpha changes reuse scan calculation, measurement rows, reference rows and expanded heatmap',async()=>{
+  const h=harness(),M=h.ctx.RIXS;let scans=0,heatmaps=0;
+  const scan=M.scan,heatmap=M.heatmap;M.scan=(...args)=>{scans++;return scan(...args);};M.heatmap=(...args)=>{heatmaps++;return heatmap(...args);};
+  const first=h.$('scanPoints').children[0],reference=h.$('edgeTable').children[0];
+  h.$('energySimulation').open=true;await h.$('energySimulation').emit('toggle');
+  for(let i=0;i<5;i++)await h.input('incidenceRange',26+i);
+  assert.equal(scans,0);assert.equal(heatmaps,1);assert.equal(h.$('scanPoints').children[0],first);assert.equal(h.$('edgeTable').children[0],reference);
+  await h.input('scattering',140);assert.equal(scans,1);assert.equal(heatmaps,2);assert.notEqual(h.$('scanPoints').children[0],first);
+  await h.input('incidence',-1);await h.input('incidence',30);assert.equal(h.$('error').hidden,true);assert.equal(h.$('scanPoints').children.length,+h.$('pointCount').textContent);
 });
