@@ -40,7 +40,7 @@
     update(s,scan){
       const geometryKey=JSON.stringify([s.lattice,s.centering,s.a,s.b,s.c,s.alpha,s.beta,s.gamma,s.units,s.dimension,s.projection]);
       if(this.geometryKey!==geometryKey)this.reset(false);this.geometryKey=geometryKey;
-      this.state={...s};this.scan=scan;this.mesh=M.zoneMesh(s);this.zones=s.showBZ?M.occupiedZones(scan.length?s:{...s,start:s.incidence,end:s.incidence},scan):{centers:[],truncated:false};
+      this.state={...s};this.scan=s.showScan?scan:[];this.mesh=M.zoneMesh(s);this.zones=s.showBZ?M.occupiedZones(scan.length?s:{...s,start:s.incidence,end:s.incidence},scan):{centers:[],truncated:false};
       this.tooltip.hidden=true;this.draw();return this.zones;
     }
     clear(){this.state=null;this.points=[];this.svg.replaceChildren();this.tooltip.hidden=true;text(this.svg,[450,200],t("Check the input conditions"),'#ff9aaa',15);}
@@ -85,6 +85,8 @@
       const projected=points.map(project);path(g,projected,'#77e4c8',1.8,{opacity:.45});
       this.points=projected.map((p,index)=>({x:p[0],y:p[1],depth:p[2],index})).sort((a,b)=>a.depth-b.depth);
       for(const p of this.points)add(g,'circle',{cx:p.x,cy:p.y,r:points.length>150?2:3,fill:color(p.index/Math.max(1,points.length-1)),stroke:'#0d1d22','stroke-width':.6,'data-scan-index':p.index});
+      this.hoverLayer=add(g,'g',{'data-hover-hairlines':'','pointer-events':'none','aria-hidden':'true'});
+      this.hoverProjection={project,minimum,maximum,is3d};
       const active=project(current);
       if(is3d){
         const guides=add(g,'g',{'data-current-hairlines':'','pointer-events':'none','aria-hidden':'true'});
@@ -119,25 +121,29 @@
       }
     }
     nearest(e){const [x,y]=this.coordinates(e);let best=null,distance=22;for(const p of this.points){if(p.x<0||p.x>W||p.y<25||p.y>397)continue;const d=Math.hypot(p.x-x,p.y-y);if(d<=distance){best=p;distance=d;}}return best;}
-    hover(e){if(!this.state)return;const p=this.nearest(e);if(!p){this.tooltip.hidden=true;return;}const row=this.scan[p.index],v=M.displayVector(row.q,this.state),labels=this.state.units==='rlu'?['H','K','L']:['qₓ','qᵧ','qz'];
-      this.tooltip.textContent=`α ${fmt(row.incidence)}°\n`+labels.map((l,i)=>l+' = '+fmt(v[i])).join('\n')+'\n'+(this.state.units==='rlu'?'r.l.u.':'Å⁻¹');const r=this.svg.getBoundingClientRect();this.tooltip.style.left=Math.max(8,Math.min(e.clientX-r.left+12,r.width-180))+'px';this.tooltip.style.top=Math.max(90,e.clientY-r.top+85)+'px';this.tooltip.hidden=false;
+    hover(e){if(!this.state)return;this.hoverLayer?.replaceChildren();const p=this.nearest(e);if(!p){this.tooltip.hidden=true;return;}const row=this.scan[p.index],v=M.displayVector(row.q,this.state),labels=this.state.units==='rlu'?['H','K','L']:['qₓ','qᵧ','qz'];
+      const {project,minimum,maximum,is3d}=this.hoverProjection,layer=this.hoverLayer;
+      if(is3d){for(const segment of projectionGuides(v,minimum,maximum,this.yaw,this.pitch))line(layer,project(segment.a),project(segment.b),'#d9f4f1',1,{'stroke-dasharray':'3 4','data-from':segment.a.join(','),'data-to':segment.b.join(',')});}
+      else {line(layer,[68,p.y],[860,p.y],'#d9f4f1',1,{'stroke-dasharray':'3 4'});line(layer,[p.x,25],[p.x,397],'#d9f4f1',1,{'stroke-dasharray':'3 4'});}
+      add(layer,'circle',{cx:p.x,cy:p.y,r:6,fill:'none',stroke:'#d9f4f1'});
+      this.tooltip.textContent=`α ${fmt(row.incidence)}° · φ ${fmt(row.azimuth)}° · τ ${fmt(row.tilt)}°\n`+labels.map((l,i)=>l+' = '+fmt(v[i])).join('\n')+'\n'+(this.state.units==='rlu'?'r.l.u.':'Å⁻¹');const r=this.svg.getBoundingClientRect();this.tooltip.style.left=Math.max(8,Math.min(e.clientX-r.left+12,r.width-180))+'px';this.tooltip.style.top=Math.max(90,e.clientY-r.top+85)+'px';this.tooltip.hidden=false;
     }
     pinchStart(){const [a,b]=[...this.touches.values()];this.pinch={distance:Math.max(1,Math.hypot(a[0]-b[0],a[1]-b[1])),mid:[(a[0]+b[0])/2,(a[1]+b[1])/2],zoom:this.zoom,pan:this.pan.slice()};this.drag=null;this.suppressClick=true;}
     bind(){
       const svg=this.svg;
       svg.addEventListener('contextmenu',e=>e.preventDefault());
-      svg.addEventListener('pointerdown',e=>{if(!this.state||![0,2].includes(e.button))return;e.preventDefault();svg.focus?.();svg.setPointerCapture?.(e.pointerId);this.tooltip.hidden=true;const p=this.coordinates(e);if(e.pointerType==='touch'){this.touches.set(e.pointerId,p);if(this.touches.size>=2){this.pinchStart();return;}}this.suppressClick=false;this.drag={id:e.pointerId,start:p,last:p,pan:e.button===2||e.shiftKey};});
+      svg.addEventListener('pointerdown',e=>{if(!this.state||![0,2].includes(e.button))return;e.preventDefault();svg.focus?.();svg.setPointerCapture?.(e.pointerId);this.tooltip.hidden=true;this.hoverLayer?.replaceChildren();const p=this.coordinates(e);if(e.pointerType==='touch'){this.touches.set(e.pointerId,p);if(this.touches.size>=2){this.pinchStart();return;}}this.suppressClick=false;this.drag={id:e.pointerId,start:p,last:p,pan:e.button===2||e.shiftKey};});
       svg.addEventListener('pointermove',e=>{
         if(!this.state)return;const p=this.coordinates(e);
         if(this.touches.has(e.pointerId)){this.touches.set(e.pointerId,p);if(this.pinch&&this.touches.size>=2){e.preventDefault();const [a,b]=[...this.touches.values()],mid=[(a[0]+b[0])/2,(a[1]+b[1])/2];this.zoom=Math.max(.2,Math.min(20,this.pinch.zoom*Math.hypot(a[0]-b[0],a[1]-b[1])/this.pinch.distance));const ratio=this.zoom/this.pinch.zoom;this.pan=mid.map((v,i)=>v-[464,211][i]-(this.pinch.mid[i]-[464,211][i]-this.pinch.pan[i])*ratio);this.draw();return;}}
         if(this.drag?.id===e.pointerId){const dx=p[0]-this.drag.last[0],dy=p[1]-this.drag.last[1];this.drag.last=p;if(Math.hypot(p[0]-this.drag.start[0],p[1]-this.drag.start[1])>4)this.suppressClick=true;
-          if(this.drag.pan||e.shiftKey||this.mode==='pan'||this.state.dimension!==3)this.pan=[this.pan[0]+dx,this.pan[1]+dy];else this.rotate(dx*.008,dy*.008);this.draw();
+          if(this.drag.pan||e.shiftKey||this.mode==='pan'||this.state.dimension!==3)this.pan=[this.pan[0]+dx,this.pan[1]+dy];else this.rotate(-dx*.008,dy*.008);this.draw();
         }else this.hover(e);
       });
       const release=e=>{this.touches.delete(e.pointerId);if(this.touches.size>=2){this.pinchStart();return;}this.pinch=null;const remaining=[...this.touches.entries()][0];this.drag=remaining?{id:remaining[0],start:remaining[1],last:remaining[1],pan:true}:null;};
       for(const ev of ['pointerup','pointercancel','lostpointercapture'])svg.addEventListener(ev,release);
-      svg.addEventListener('pointerleave',()=>{this.tooltip.hidden=true;});
-      svg.addEventListener('click',e=>{if(this.suppressClick){this.suppressClick=false;return;}if(!this.state)return;const p=this.nearest(e);if(p)this.onSelect(this.scan[p.index].incidence);});
+      svg.addEventListener('pointerleave',()=>{this.tooltip.hidden=true;this.hoverLayer?.replaceChildren();});
+      svg.addEventListener('click',e=>{if(this.suppressClick){this.suppressClick=false;return;}if(!this.state)return;const p=this.nearest(e);if(p)this.onSelect(this.scan[p.index].scanValue);});
       svg.addEventListener('wheel',e=>{if(!this.state)return;e.preventDefault();this.zoomBy(Math.exp(-e.deltaY*.001));},{passive:false});
       svg.addEventListener('dblclick',()=>this.reset());
       svg.addEventListener('keydown',e=>{
@@ -146,8 +152,8 @@
         if(['+','=','-'].includes(e.key)){e.preventDefault();this.zoomBy(e.key==='-'?.8:1.25);return;}
         if(!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key))return;e.preventDefault();
         const x=e.key==='ArrowLeft'?-1:e.key==='ArrowRight'?1:0,y=e.key==='ArrowUp'?-1:e.key==='ArrowDown'?1:0;
-        if(this.state.dimension===3&&!e.shiftKey){if(this.mode==='pan')this.pan=[this.pan[0]+x*20,this.pan[1]+y*20];else this.rotate(x*.12,y*.12);this.draw();}
-        else if((e.shiftKey||x)&&this.scan.length){let index=this.scan.reduce((best,p,i)=>Math.abs(p.incidence-this.state.incidence)<Math.abs(this.scan[best].incidence-this.state.incidence)?i:best,0);index=Math.max(0,Math.min(this.scan.length-1,index+(x||y)));this.onSelect(this.scan[index].incidence);}
+        if(this.state.dimension===3&&!e.shiftKey){if(this.mode==='pan')this.pan=[this.pan[0]+x*20,this.pan[1]+y*20];else this.rotate(-x*.12,y*.12);this.draw();}
+        else if((e.shiftKey||x)&&this.scan.length){let index=this.scan.reduce((best,p,i)=>Math.abs(p.scanValue-this.state[this.state.scanAxis])<Math.abs(this.scan[best].scanValue-this.state[this.state.scanAxis])?i:best,0);index=Math.max(0,Math.min(this.scan.length-1,index+(x||y)));this.onSelect(this.scan[index].scanValue);}
         else{this.pan[1]+=y*20;this.draw();}
       });
     }

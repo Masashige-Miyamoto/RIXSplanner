@@ -65,17 +65,17 @@ async function main(){
   await click('reset');
   await input('incidence',75);await input('loss',0);
   assert.equal(await evaluate(`document.getElementById('qParallel').textContent`),'0.0000');
-  await input('incidence',180);assert.equal(await evaluate(`document.getElementById('error').hidden`),false);assert.equal(await evaluate(`document.getElementById('scanDownload').disabled`),true);assert.equal(await evaluate(`document.querySelectorAll('#momentumMap circle').length`),0);
+  await input('incidence',180);assert.equal(await evaluate(`document.getElementById('angleError').hidden`),false);assert.equal(await evaluate(`document.getElementById('incidence').value`),'75');
   await input('incidence',25);assert.equal(await evaluate(`document.getElementById('error').hidden`),true);
   await evaluate(`document.getElementById('lattice').value='hexagonal';document.getElementById('lattice').dispatchEvent(new Event('input'))`);await sleep(150);
   await evaluate(`document.getElementById('units').value='rlu';document.getElementById('units').dispatchEvent(new Event('input'));document.querySelector('[data-view="xy"]').click()`);await sleep(150);
   assert.equal(await evaluate(`document.getElementById('b').disabled`),true);
   assert.ok(await evaluate(`document.getElementById('momentumMap').textContent.includes('r.l.u.')`));
-  await input('edgeSearch','Cu');assert.equal(await evaluate(`document.querySelectorAll('#edgeTable tr').length`),3);
+  await input('edgeSearch','Cu');assert.equal(await evaluate(`document.querySelectorAll('#edgeTable tr').length`),7);
   await evaluate(`document.querySelector('button[data-element="O"]').click();document.getElementById('edgeSearch').value='';document.getElementById('edgeSearch').dispatchEvent(new Event('input'));document.querySelector('#edgeTable button').click()`);await sleep(150);
   assert.equal(await evaluate(`document.getElementById('energy').value`),'531');
   await input('energy',530.5);await send('Page.reload');await waitFor(`document.getElementById('energy')?.value==='530.5'`);
-  await click('reset');await click('scanDownload');await click('spectrumDownload');await click('heatmapDownload');await click('saveSettings');await click('mapDownload');
+  await click('reset');assert.equal(await evaluate(`document.getElementById('energySimulation').open`),false);await evaluate(`document.getElementById('energySimulation').open=true`);await sleep(150);await click('scanDownload');await click('spectrumDownload');await click('heatmapDownload');await click('saveSettings');await click('mapDownload');
   for(let i=0;i<40&&!fs.existsSync(path.join(qa,'rixs-momentum-map.svg'));i++)await sleep(150);
   for(const name of ['rixs-scan.csv','rixs-spectrum.csv','rixs-intensity-map.csv','rixs-settings.json','rixs-momentum-map.svg'])assert.ok(fs.existsSync(path.join(qa,name)),name);
   const scan=fs.readFileSync(path.join(qa,'rixs-scan.csv'),'utf8').trim().split('\n').filter(l=>!l.startsWith('#'));assert.equal(scan.length,1+Number(await evaluate(`document.getElementById('pointCount').textContent`)));assert.equal(scan[0].split(',').length,18);assert.equal(scan[1].split(',').length,18);
@@ -89,7 +89,7 @@ async function main(){
   assert.equal(await evaluate(`document.documentElement.scrollWidth>innerWidth`),false);
   const mobile=await send('Page.captureScreenshot',{format:'png',captureBeyondViewport:true});fs.writeFileSync(path.join(qa,'mobile.png'),Buffer.from(mobile.data,'base64'));
   assert.equal(errors.length,0,JSON.stringify(errors));
-  console.log('PASS: live geometry, invalid input clearing, hexagonal/rlu, edge filtering, persistence, 5 downloads, JSON import, desktop/mobile layout; no runtime exceptions.');
+  console.log('PASS: live geometry, unreachable angle rejection, hexagonal/rlu, edge filtering, persistence, 5 downloads, JSON import, desktop/mobile layout; no runtime exceptions.');
   await send('Browser.close');
 }
 main().catch(e=>{console.error(e);process.exitCode=1;}).finally(()=>{if(ws)ws.close();if(browser)browser.kill();});

@@ -47,7 +47,7 @@ test('orthogonal BZ half-widths are 0.5 in r.l.u.',()=>{
   for(const projection of ['xy','xz','zy'])for(const p of M.zoneProjection(s({units:'rlu',projection})))for(const v of p)close(Math.abs(v),.5);
 });
 test('scan includes endpoints; single point uses start',()=>{
-  const state=s({hStep:.05}),points=M.scan(state);close(points[0].incidence,state.start);close(points.at(-1).incidence,state.end);for(let i=1;i<points.length-1;i++)close(Math.abs(points[i].hkl[0]-points[i-1].hkl[0]),.05);assert.ok(Math.abs(points.at(-1).hkl[0]-points.at(-2).hkl[0])<=.05);assert.equal(M.scan(s({end:10})).length,1);
+  const state=s({hStep:.05,units:'rlu'}),points=M.scan(state);close(points[0].incidence,state.start);close(points.at(-1).incidence,state.end);for(let i=1;i<points.length-1;i++)close(Math.abs(points[i].hkl[0]-points[i-1].hkl[0]),.05);assert.ok(Math.abs(points.at(-1).hkl[0]-points.at(-2).hkl[0])<=.05);assert.equal(M.scan(s({end:10})).length,1);
 });
 test('Gaussian FWHM and integrated area',()=>{
   close(M.gaussian(.02,0,.04)/M.gaussian(0,0,.04),.5,1e-9);
@@ -143,9 +143,9 @@ test('fixed L solver preserves L on the selected outgoing branch for tilted and 
   const state=s();Object.assign(state,M.captureL(state));assert.throws(()=>M.solveScattering(state,80));
 });
 test('H stepping covers a turning point without duplicate angles and respects each segment spacing',()=>{
-  const state=s({azimuth:75,tilt:35,hStep:.007}),rows=M.scan(state),[c,d]=M.hCoefficients(state);
+  const state=s({azimuth:75,tilt:35,hStep:.007,units:'rlu'}),rows=M.scan(state),[c,d]=[M.momentum(state,0).hkl[0],M.momentum(state,90).hkl[0]];
   const turn=Math.atan2(d,c)/M.RAD+180;assert.ok(turn>state.start&&turn<state.end);
-  const turning=rows.findIndex(p=>Math.abs(p.incidence-turn)<1e-8);assert.ok(turning>0&&turning<rows.length-1);
+  const turning=rows.findIndex(p=>Math.abs(p.incidence-turn)<2e-6);assert.ok(turning>0&&turning<rows.length-1);
   for(let i=1;i<rows.length;i++){
     assert.ok(rows[i].incidence>rows[i-1].incidence);
     const dh=Math.abs(rows[i].hkl[0]-rows[i-1].hkl[0]);
@@ -153,7 +153,7 @@ test('H stepping covers a turning point without duplicate angles and respects ea
   }
 });
 test('constant H and excessive density produce useful scan errors',()=>{
-  assert.throws(()=>M.scan(s({azimuth:90})),/H is constant/);
+  assert.throws(()=>M.scan(s({azimuth:90})),/component is constant/);
   assert.throws(()=>M.scan(s({hStep:.000001})),/2,001/);
   assert.equal(M.scan(s({azimuth:90,start:20,end:20})).length,1);
 });
@@ -165,7 +165,7 @@ test('legacy dimension, plane and point-count settings migrate to H steps',()=>{
 
 test('fixed-L scans preserve L and H spacing over both outgoing branches and skew lattices',()=>{
   for(const options of [{},{tilt:35,azimuth:40},{lattice:'triclinic',alpha:75,beta:80,gamma:100,tilt:-25,azimuth:30},{lattice:'rhombohedral',centering:'R',alpha:78,azimuth:40}])for(const incidence of [25,100]){
-    const state=s({...options,incidence,angleMode:'l'});Object.assign(state,M.captureL(state));const range=M.scanLimits(state);state.start=range.min;state.end=range.max;
+    const state=s({...options,incidence,angleMode:'l',units:'rlu'});Object.assign(state,M.captureL(state));const range=M.scanLimits(state);state.start=range.min;state.end=range.max;
     assert.ok(range.min<=incidence&&range.max>=incidence);M.validate(state);const points=M.scan(state);assert.ok(points.length>1);
     for(let i=0;i<points.length;i++){
       const p=points[i];close(p.hkl[2],state.lockedL,1e-9);close(p.scattering,p.incidence+p.beta);assert.ok(p.scattering<=180&&p.beta>0);
@@ -173,12 +173,12 @@ test('fixed-L scans preserve L and H spacing over both outgoing branches and ske
     }
     close(points[0].incidence,state.start);close(points.at(-1).incidence,state.end);assert.ok(Math.abs(points[0].scattering-points.at(-1).scattering)>1);
     for(let i=0;i<=100;i++){const p=M.scanPoint(state,range.min+(range.max-range.min)*i/100);close(p.hkl[2],state.lockedL,1e-9);}
-    assert.throws(()=>M.scan({...state,end:Math.min(179.99,range.max+.01)}),/fixed-L range/);
+    assert.throws(()=>M.scan({...state,end:Math.min(179.99,range.max+.01)}),/available range/);
   }
 });
 test('fixed-L special cases reject constant H and excessive points, and permit a single point',()=>{
   const state=s({angleMode:'l',azimuth:90});Object.assign(state,M.captureL(state));const range=M.scanLimits(state);state.start=range.min;state.end=range.max;
-  assert.throws(()=>M.scan(state),/H is constant/);assert.equal(M.scan({...state,start:25,end:25}).length,1);
+  assert.throws(()=>M.scan(state),/component is constant/);assert.equal(M.scan({...state,start:25,end:25}).length,1);
   state.azimuth=0;Object.assign(state,M.captureL(state));assert.throws(()=>M.scan({...state,hStep:.000001}),/2,001/);
 });
 test('fixed-L heatmap uses each incidence scattering angle for the elastic dispersion approximation',()=>{

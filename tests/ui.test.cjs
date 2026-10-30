@@ -56,9 +56,9 @@ test('UI starts with a complete valid calculation and restores saved conditions'
   await h.input('incidence',75);await h.input('loss',0);assert.equal(h.$('qParallel').textContent,'0.0000');
   const restored=harness(h.storage.get('rixs-cut-planner.v1'));assert.equal(restored.$('incidence').value,'75');assert.equal(restored.$('qParallel').textContent,'0.0000');
 });
-test('UI invalid input clears results and preserves last valid saved settings',async()=>{
+test('UI rejects unreachable incidence transactionally and preserves the last geometry',async()=>{
   const h=harness(),saved=h.storage.get('rixs-cut-planner.v1');await h.input('incidence',180);
-  assert.equal(h.$('error').hidden,false);assert.equal(h.$('qMagnitude').textContent,'—');assert.equal(h.$('scanDownload').disabled,true);assert.equal(h.$('momentumMap').querySelectorAll('circle').length,0);assert.equal(h.storage.get('rixs-cut-planner.v1'),saved);
+  assert.equal(h.$('angleError').hidden,false);assert.equal(h.$('error').hidden,true);assert.equal(h.$('incidence').value,'25');assert.ok(+h.$('qMagnitude').textContent>0);assert.equal(h.storage.get('rixs-cut-planner.v1'),saved);
   await h.input('incidence',25);assert.equal(h.$('error').hidden,true);assert.equal(h.$('scanDownload').disabled,false);
 });
 test('UI scan slider, crystal restrictions, edge application and reference search',async()=>{
@@ -66,7 +66,7 @@ test('UI scan slider, crystal restrictions, edge application and reference searc
   await h.input('lattice','hexagonal');assert.equal(h.$('b').disabled,true);
   await h.input('lattice','orthorhombic');assert.equal(h.$('b').disabled,false);
   await h.$('elements').children.find(b=>b.dataset.element==='O').click();await h.$('edgeTable').children[0].querySelector('button').click();assert.equal(h.$('energy').value,'531');assert.equal(h.$('resonance').value,'932.7');await h.$('elements').children[0].click();
-  await h.input('edgeSearch','Cu');assert.equal(h.$('edgeTable').children.length,3);
+  await h.input('edgeSearch','Cu');assert.equal(h.$('edgeTable').children.length,7);
   await h.input('edgeSearch','no-match');assert.equal(h.$('edgeTable').children.length,1);assert.match(h.$('edgeTable').textContent,/No matching reference/);
 });
 test('UI downloads contain matching CSV data and reproducible settings',async()=>{
@@ -168,13 +168,13 @@ test('scan-only errors retain live geometry, spectrum and L-locked controls',asy
   await h.input('hStep',.000001);assert.equal(h.$('scanError').hidden,false);assert.match(h.$('scanError').textContent,/2,001/);
   await h.input('hStep',.02);assert.equal(h.$('scanError').hidden,true);
 });
-test('H-spaced CSV includes tilt, derived timing and consistent unit-independent stepping',async()=>{
+test('CSV includes tilt, derived timing and momentum steps in map units',async()=>{
   const h=harness();await h.input('tilt',25);await h.input('hStep',.025);await h.input('units','rlu');await h.$('scanDownload').click();
   const csv=await h.downloads[0].blob.text(),lines=csv.split('\n').filter(l=>!l.startsWith('#')),rows=lines.slice(1).map(l=>l.split(',').map(Number));
   assert.equal(+h.$('pointCount').textContent,rows.length);assert.equal(h.$('scanTime').textContent,(rows.length*30/60).toFixed(1)+' min');
   for(let i=1;i<rows.length-1;i++)assert.ok(Math.abs(Math.abs(rows[i][11]-rows[i-1][11])-.025)<1e-10);
   assert.ok(rows.every(row=>row[16]===25&&row[12]>0));
-  const count=rows.length;await h.input('units','angstrom');assert.equal(+h.$('pointCount').textContent,count);
+  const count=rows.length;await h.input('units','angstrom');assert.notEqual(+h.$('pointCount').textContent,count);await h.$('scanDownload').click();const physical=(await h.downloads.at(-1).blob.text()).split('\n').filter(l=>!l.startsWith('#')).slice(1).map(l=>l.split(',').map(Number));for(let i=1;i<physical.length-1;i++)assert.ok(Math.abs(Math.abs(physical[i][6]-physical[i-1][6])-.025)<1e-10);assert.equal(physical[0][14],.5);
 });
 
 
@@ -193,7 +193,7 @@ test('English source and default UI switch to Japanese without changing conditio
 });
 test('validation, fixed-L rejection and notifications follow language changes',async()=>{
   const h=harness(),lang=async value=>{h.$('language').value=value;await h.$('language').emit('change');};
-  await h.input('incidence',180);assert.match(h.$('error').textContent,/must satisfy/);await lang('ja');assert.match(h.$('error').textContent,/満たす必要/);assert.equal(h.$('incidence').value,'180');
+  await h.input('incidence',180);assert.match(h.$('angleError').textContent,/outside/);await lang('ja');assert.match(h.$('angleError').textContent,/範囲外/);assert.equal(h.$('incidence').value,'25');
   await h.input('incidence',25);await h.input('angleMode','l');await h.input('incidenceRange',80);assert.match(h.$('angleError').textContent,/直前の配置/);await lang('en');assert.match(h.$('angleError').textContent,/previous geometry/);
   await h.input('angleMode','scattering');await h.$('saveSettings').click();assert.match(h.$('message').textContent,/Settings saved/);await lang('ja');assert.match(h.$('message').textContent,/JSON に保存/);
   h.$('loadSettings').files=[{size:100001,text:async()=>''}];await h.$('loadSettings').emit('change');assert.match(h.$('message').textContent,/大きすぎ/);await lang('en');assert.match(h.$('message').textContent,/too large/);assert.doesNotMatch(h.$('message').textContent,/[ぁ-んァ-ヶ一-龠]/);
@@ -221,19 +221,69 @@ test('map controls share the readout row and projected crosses are on their resp
 });
 
 
-test('fixed-L mode clamps scan range and exports the changing scattering geometry',async()=>{
+test('fixed-L mode resets the full range and exports the changing scattering geometry',async()=>{
   const h=harness(),state=()=>JSON.parse(h.storage.get('rixs-cut-planner.v1')).settings;
-  await h.input('tilt',25);await h.input('angleMode','l');const locked=state().lockedL,range=h.ctx.RIXS.scanLimits(state());
-  assert.equal(+h.$('start').value,range.min);assert.equal(+h.$('end').value,range.max);assert.equal(+h.$('startRange').min,range.min);assert.equal(+h.$('endRange').max,range.max);assert.match(h.$('scanModeNote').textContent,/fixed L/);assert.equal(h.$('scanError').hidden,true);
+  await h.input('units','rlu');await h.input('tilt',25);await h.input('angleMode','l');const locked=state().lockedL,range=h.ctx.RIXS.scanLimits(state());
+  assert.equal(+h.$('start').value,range.min);assert.equal(+h.$('end').value,range.max);assert.equal(+h.$('startRange').min,range.min);assert.equal(+h.$('endRange').max,range.max);assert.match(h.$('scanModeNote').textContent,/L stays fixed/);assert.equal(h.$('scanError').hidden,true);
   h.$('allZones').checked=true;await h.$('allZones').emit('input');assert.equal(h.$('error').hidden,true);
   await h.$('scanDownload').click();const csv=await h.downloads[0].blob.text(),rows=csv.split('\n').filter(l=>!l.startsWith('#')).slice(1).map(l=>l.split(',').map(Number));
   assert.equal(rows.length,+h.$('pointCount').textContent);assert.ok(rows.at(-1)[15]>rows[0][15]);
   for(let i=0;i<rows.length;i++){assert.ok(Math.abs(rows[i][13]-locked)<1e-10);assert.ok(Math.abs(rows[i][1]+rows[i][2]-rows[i][15])<1e-10);if(i>0&&i<rows.length-1)assert.ok(Math.abs(Math.abs(rows[i][11]-rows[i-1][11])-state().hStep)<1e-10);}
   const start=h.$('start').value,end=h.$('end').value;await h.input('incidenceRange',20);assert.equal(h.$('start').value,start);assert.equal(h.$('end').value,end);assert.equal(h.$('scanError').hidden,true);
-  h.$('language').value='ja';await h.$('language').emit('change');assert.match(h.$('scanModeNote').textContent,/L・tilt・φ を固定/);assert.match(h.$('scanRangeNote').textContent,/走査可能/);
-  await h.input('angleMode','scattering');assert.match(h.$('scanModeNote').textContent,/2θ・tilt・φ を固定/);await h.$('scanDownload').click();const fixed=(await h.downloads.at(-1).blob.text()).split('\n').filter(l=>!l.startsWith('#')).slice(1).map(l=>l.split(',').map(Number));assert.ok(fixed.every(row=>row[15]===state().scattering));
+  h.$('language').value='ja';await h.$('language').emit('change');assert.match(h.$('scanModeNote').textContent,/L を固定/);assert.match(h.$('scanRangeNote').textContent,/走査可能/);
+  await h.input('angleMode','scattering');assert.match(h.$('scanModeNote').textContent,/2θ を固定/);await h.$('scanDownload').click();const fixed=(await h.downloads.at(-1).blob.text()).split('\n').filter(l=>!l.startsWith('#')).slice(1).map(l=>l.split(',').map(Number));assert.ok(fixed.every(row=>row[15]===state().scattering));
 });
 test('box headings have no ordinal numbers in either language',async()=>{
   const h=harness(),html=fs.readFileSync(path.join(root,'index.html'),'utf8');assert.doesNotMatch(html,/class="section-number"/);assert.doesNotMatch(html,/<h2><span>0[1-9]<\/span>/);
   for(const language of ['en','ja']){h.$('language').value=language;await h.$('language').emit('change');for(const heading of h.document.querySelectorAll('h2'))assert.doesNotMatch(heading.textContent,/^\s*0[1-9]/);}
+});
+
+test('horizontal drag follows ARPES direction; hover draws and clears projection Hair',async()=>{
+  const h=harness();await h.input('dimension',3);const svg=h.$('momentumMap'),before=+svg.getAttribute('data-camera').split(',')[0];
+  await svg.emit('pointerdown',{button:0,pointerId:1,clientX:400,clientY:200});await svg.emit('pointermove',{pointerId:1,clientX:460,clientY:200});await svg.emit('pointerup',{pointerId:1});assert.ok(+svg.getAttribute('data-camera').split(',')[0]<before);
+  const point=svg.querySelectorAll('circle').find(p=>p.getAttribute('data-scan-index')==='20');await svg.emit('pointermove',{pointerId:2,clientX:+point.attrs.cx,clientY:+point.attrs.cy});assert.equal(svg.querySelector('[data-hover-hairlines]').querySelectorAll('line').length,9);assert.equal(h.$('mapTooltip').hidden,false);
+  await svg.emit('pointerleave');assert.equal(svg.querySelector('[data-hover-hairlines]').children.length,0);assert.equal(h.$('mapTooltip').hidden,true);
+  assert.match(fs.readFileSync(path.join(root,'assets/css/app.css'),'utf8'),/#momentumMap[^\n]+cursor:default/);
+});
+test('HK controls, momentum inversion, and scan table apply the same full geometry',async()=>{
+  const h=harness(),state=()=>JSON.parse(h.storage.get('rixs-cut-planner.v1')).settings,M=h.ctx.RIXS;
+  await h.input('tilt',20);await h.input('azimuth',25);await h.input('angleMode','hk');assert.equal(h.$('scattering').disabled,true);assert.equal(h.$('incidenceComponent').value,'2');
+  const locked=[state().lockedH,state().lockedK];await h.input('incidenceUnit','rlu');const target=M.componentValue(state(),30,'incidence',2,'rlu');await h.input('incidence',target);assert.ok(Math.abs(state().incidence-30)<1e-5);
+  const q=M.momentum(state());for(let i=0;i<2;i++)assert.ok(Math.abs(q.hkl[i]-locked[i])<1e-9);
+  assert.equal(h.$('scanPoints').children.length,+h.$('pointCount').textContent);const first=h.$('scanPoints').children[0];const alpha=+first.children[1].textContent;await first.querySelector('button').click();assert.ok(Math.abs(state().incidence-alpha)<1e-5);
+  await h.input('incidence',1000);assert.equal(h.$('angleError').hidden,false);assert.ok(Math.abs(state().incidence-alpha)<1e-5);
+});
+test('range units and step labels follow map units; scan axis and configuration reset maximum range',async()=>{
+  const h=harness(),state=()=>JSON.parse(h.storage.get('rixs-cut-planner.v1')).settings,M=h.ctx.RIXS;
+  await h.input('start',20);await h.input('end',30);await h.input('scattering',130);assert.equal(state().start,.1);assert.equal(state().end,129.9);
+  await h.input('start',20);await h.input('incidence',35);assert.equal(state().start,.1);
+  await h.input('scanAxis','azimuth');assert.equal(state().start,-180);assert.equal(state().end,180);assert.equal(state().scanComponent,1);assert.match(h.$('stepLabel').textContent,/qᵧ.*Å⁻¹/);
+  await h.input('scanRangeUnit','momentum');const target=M.componentValue(state(),-120);await h.input('start',target);assert.ok(Math.abs(state().start+120)<1e-5);assert.match(h.$('startLabel').textContent,/Å⁻¹/);
+  await h.input('units','rlu');assert.match(h.$('startLabel').textContent,/r.l.u./);assert.match(h.$('stepLabel').textContent,/K.*r.l.u./);assert.ok(Math.abs(+h.$('start').value-M.componentValue(state(),state().start))<1e-9);
+  await h.input('scanRangeUnit','angle');await h.input('scanAxis','tilt');assert.equal(state().start,-85);assert.equal(state().end,85);
+});
+test('scan visibility does not discard measurement points or CSV; exposure is in minutes',async()=>{
+  const h=harness();const count=+h.$('pointCount').textContent;h.$('showScan').checked=false;await h.$('showScan').emit('input');assert.equal(h.$('momentumMap').querySelectorAll('[data-scan-index]').length,0);assert.equal(h.$('scanPoints').children.length,count);
+  await h.input('dwell',2);assert.equal(h.$('scanTime').textContent,(count*2<60?(count*2).toFixed(1)+' min':(count*2/60).toFixed(2)+' h'));
+  await h.$('scanDownload').click();const csv=await h.downloads[0].blob.text(),rows=csv.split('\n').filter(l=>!l.startsWith('#'));assert.match(rows[0],/dwell_min/);assert.equal(+rows[1].split(',')[14],2);
+  h.$('showScan').checked=true;await h.$('showScan').emit('input');assert.equal(h.$('momentumMap').querySelectorAll('[data-scan-index]').length,count);
+});
+test('periodic table contains H-U; reference and collapsed simulation occupy the requested rows',async()=>{
+  const h=harness(),html=fs.readFileSync(path.join(root,'index.html'),'utf8'),elements=h.$('elements').children.filter(b=>b.dataset.element);
+  assert.equal(elements.length,92);assert.ok(elements.every(b=>+b.style.gridColumn>=1&&+b.style.gridColumn<=18));
+  assert.ok(html.indexOf('id="scanPoints"')<html.indexOf('aria-labelledby="referenceTitle"'));assert.ok(html.indexOf('aria-labelledby="referenceTitle"')<html.indexOf('id="energySimulation"'));
+  assert.equal(h.$('energySimulation').getAttribute('open'),undefined);assert.ok(h.$('energySimulation').querySelector('#spectrum'));assert.ok(h.$('energySimulation').querySelector('#heatmap'));assert.ok(h.$('energySimulation').querySelector('#resonance'));
+  await elements.find(b=>b.dataset.element==='U').click();await h.$('edgeTable').children[0].querySelector('button').click();assert.equal(+h.$('energy').value,115606);assert.equal(h.$('error').hidden,true);
+  await elements.find(b=>b.dataset.element==='H').click();await h.$('edgeTable').children[0].querySelector('button').click();assert.equal(+h.$('energy').value,13.6);assert.equal(h.$('error').hidden,true);
+});
+test('new controls and explanatory text switch languages and preserve all scan settings',async()=>{
+  const h=harness();await h.input('scanAxis','tilt');await h.input('scanRangeUnit','momentum');const saved=h.storage.get('rixs-cut-planner.v1');h.$('language').value='ja';await h.$('language').emit('change');assert.match(h.$('pointsTitle').textContent,/測定点/);assert.match(h.$('scanRangeNote').textContent,/最大範囲/);assert.match(h.$('startLabel').textContent,/開始/);assert.equal(h.storage.get('rixs-cut-planner.v1'),saved);
+});
+
+test('focused momentum input permits intermediate typing and normalizes only on blur',async()=>{
+  const h=harness();await h.input('incidenceUnit','rlu');h.document.activeElement=h.$('incidence');
+  await h.input('incidence','');assert.equal(h.$('incidence').value,'');assert.equal(h.$('angleError').hidden,false);
+  await h.input('incidence','0.2');assert.equal(h.$('incidence').value,'0.2');assert.equal(h.$('angleError').hidden,true);
+  const state=JSON.parse(h.storage.get('rixs-cut-planner.v1')).settings;assert.ok(Math.abs(h.ctx.RIXS.momentum(state).hkl[0]-.2)<1e-8);
+  h.document.activeElement=null;await h.$('incidence').emit('blur');assert.ok(Math.abs(+h.$('incidence').value-.2)<1e-8);
 });
