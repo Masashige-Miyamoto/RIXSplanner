@@ -6,6 +6,7 @@
   I.apply();
   const KEY='rixs-cut-planner.v1';
   let state={...M.defaults}, valid=true, currentScan=[], currentSpectrum=[], currentHeatmap=null, elementFilter='Cu', frame=0;
+  let availableRange=null,scanCache=null,tableScan=null,tableDwell=null,tableLanguage='',referenceKey='',heatmapKey='';
   const fmt=(n,d=3)=>Math.abs(n)<0.5*10**(-d)?(0).toFixed(d):n.toFixed(d);
   const svgNS='http://www.w3.org/2000/svg';
   function node(tag,attrs={},text){const el=document.createElementNS(svgNS,tag);for(const [key,value]of Object.entries(attrs))el.setAttribute(key,value);if(text!==undefined)el.textContent=text;return el;}
@@ -15,9 +16,9 @@
   function path(svg,points,color,width=2,extra={}){return add(svg,'path',{d:points.map((p,i)=>(i?'L':'M')+p.map(x=>x.toFixed(3)).join(',')).join(' '),fill:'none',stroke:color,'stroke-width':width,...extra});}
   function message(source,detail=''){$('message').setAttribute('data-message',source);$('message').setAttribute('data-message-detail',detail);$('message').textContent=I.error(source)+I.error(detail);$('message').hidden=false;}
   function color(t){const a=t<.5?[103,184,244]:[119,228,200],b=t<.5?[119,228,200]:[242,212,113],u=t<.5?t*2:(t-.5)*2;return `rgb(${a.map((v,i)=>Math.round(v+(b[i]-v)*u)).join(',')})`;}
-  function syncControls(){
+  function syncControls(adjustScan=false){
     for(const el of document.querySelectorAll('[data-state]')){if(el.type==='checkbox')el.checked=state[el.id];else el.value=state[el.id];}
-    syncLattice();syncSliders();syncView();syncAngleMode();$('angleError').hidden=true;
+    syncLattice();syncSliders(adjustScan);syncMomentumTarget();syncView();syncAngleMode();$('angleError').hidden=true;
   }
   function syncLattice(){
     const c=M.cell(state),allowed=M.CENTERINGS[state.lattice]||['P'];
@@ -35,21 +36,31 @@
   // Reformat only after blur; otherwise inverse-input feedback interrupts typing.
   const displayInput=(id,value)=>{if(document.activeElement!==$(id))$(id).value=value;};
   function syncMomentumInputs(){
-    const angular=state.incidenceUnit==='angle';$('incidenceComponent').hidden=angular;
-    for(const id of ['incidenceComponent','scanComponent']){
-      const names=componentNames(id==='scanComponent'?state.units:state.incidenceUnit);
+    for(const id of ['momentumComponent','scanComponent']){
+      const names=componentNames(state.units);
       for(let i=0;i<3;i++)$(id).children[i].textContent=names[i];$(id).value=state[id];
     }
-    let p;try{p=M.momentum(state);}catch{return;}displayInput('incidence',angular?state.incidence:Number((state.incidenceUnit==='rlu'?p.hkl:p.q)[state.incidenceComponent].toPrecision(10)));
-    $('incidence').step='any';displayInput('dwell',Number((state.dwell/60).toPrecision(10)));
+    $('momentumTargetUnit').textContent=unitName(state.units);
+    displayInput('incidence',state.incidence);
+    displayInput('dwell',Number((state.dwell/60).toPrecision(10)));
     for(const key of ['scattering','azimuth','tilt'])displayInput(key,state[key]);
     $('stepLabel').textContent='Δ'+componentNames(state.units)[state.scanComponent]+' / '+unitName(state.units);
     $('mapScanAxis').textContent=axisSymbol()+' / °';
   }
+  function syncMomentumTarget(){
+    try{const p=M.momentum(state);$('momentumTarget').value=Number((state.units==='rlu'?p.hkl:p.q)[state.momentumComponent].toPrecision(10));}catch{/* Keep the draft while geometry is invalid. */}
+  }
   function syncSliders(adjustScan=false){
     try{
       M.validate(state,{scanRange:false});const range=M.scanLimits(state),incidenceRange=M.scanLimits({...state,scanAxis:'incidence'});
-      if(adjustScan){state.start=range.min;state.end=range.max;}
+      // Only a changed feasible width resets the user's endpoints. A moved
+      // interval of equal width retains their positions relative to its start.
+      if(adjustScan&&availableRange){
+        const width=range.max-range.min,previousWidth=availableRange.max-availableRange.min;
+        if(availableRange.axis!==state.scanAxis||Math.abs(width-previousWidth)>1e-6){state.start=range.min;state.end=range.max;}
+        else if(Math.abs(range.min-availableRange.min)>1e-6){const shift=range.min-availableRange.min;state.start+=shift;state.end+=shift;}
+      }
+      availableRange={...range,axis:state.scanAxis};
       const isMomentum=state.scanRangeUnit==='momentum',extent=isMomentum?M.componentExtent(state):range;
       for(const key of ['start','end']){
         const value=isMomentum?M.componentValue(state,state[key]):state[key];
@@ -65,7 +76,7 @@
     $('angleLockLabel').textContent=state.angleMode==='l'?t('Fixed L / r.l.u.'):state.angleMode==='hk'?t('Fixed H, K / r.l.u.'):t('Fixed 2θ / °');
     $('angleLockValue').textContent=state.angleMode==='hk'?[state.lockedH,state.lockedK].map(v=>fmt(v,4)).join(', '):fmt(state.angleMode==='l'?state.lockedL:state.scattering,state.angleMode==='l'?5:2);
     $('scanModeNote').textContent=state.angleMode==='hk'?t('H and K stay fixed. α / φ scans adjust 2θ and τ; τ scans adjust 2θ and φ.'):state.angleMode==='l'?t('L stays fixed; 2θ follows the selected scan angle on the same outgoing branch.'):t('2θ stays fixed while the selected angle varies.');
-    try{const limits=M.scanLimits(state);$('scanRangeNote').textContent=axisSymbol()+' '+fmt(limits.min,3)+' … '+fmt(limits.max,3)+'° · '+t('Configuration changes reset the scan to its full continuous range.');}catch{$('scanRangeNote').textContent='';}
+    try{const limits=M.scanLimits(state);$('scanRangeNote').textContent=axisSymbol()+' '+fmt(limits.min,3)+' … '+fmt(limits.max,3)+'° · '+t('The scan range resets only when the available angular width changes.');}catch{$('scanRangeNote').textContent='';}
   }
   function syncView(){
     const is3d=state.dimension===3;$('mapRotate').hidden=!is3d;
@@ -86,21 +97,27 @@
     if(previousLattice!==state.lattice)document.querySelector('[data-cell-details]')?.setAttribute('open','');
     const geometryChanged=['scanAxis','angleMode','energy','scattering','azimuth','tilt','loss','lattice','centering','a','b','c','alpha','beta','gamma'].includes(e?.target?.id);
     if(e?.target?.id==='angleMode'||geometryChanged&&e?.target?.id!=='scanAxis')try{if(state.angleMode==='l')Object.assign(state,M.captureL(state));if(state.angleMode==='hk')Object.assign(state,M.captureHK(state));}catch{/* Validation reports incomplete lattice inputs. */}
-    if(e?.target?.id==='angleMode'){state.scanComponent=state.angleMode==='hk'?2:0;state.incidenceComponent=state.scanComponent;}
+    if(e?.target?.id==='angleMode'){state.scanComponent=state.angleMode==='hk'?2:0;state.momentumComponent=state.scanComponent;}
     if(e?.target?.id==='scanAxis')state.scanComponent=state.angleMode==='hk'?2:state.scanAxis==='incidence'?0:1;
-    $('angleError').hidden=true;syncSliders(geometryChanged);syncAngleMode();if(previousDimension!==state.dimension)syncView();schedule();
+    $('angleError').hidden=true;syncSliders(true);if(['units','momentumComponent','angleMode'].includes(e?.target?.id))syncMomentumTarget();syncAngleMode();if(previousDimension!==state.dimension)syncView();schedule();
   }
   function schedule(){cancelAnimationFrame(frame);frame=requestAnimationFrame(render);}
   function disableExports(disabled){for(const id of ['scanDownload','spectrumDownload','heatmapDownload','mapDownload','saveSettings'])$(id).disabled=disabled;}
   function clearHeatmap(){currentHeatmap=null;const cv=$('heatmap');cv.getContext('2d').clearRect(0,0,cv.width,cv.height);}
+  function trajectoryKey(){
+    const keys=['angleMode','energy','loss','scattering','incidence','azimuth','tilt','lattice','centering','a','b','c','alpha','beta','gamma','lockedL','lockBranch','lockedH','lockedK','scanAxis','scanComponent','units','start','end','hStep'];
+    // At fixed 2theta, moving alpha along an alpha scan changes only the
+    // current marker. Its trajectory and measurement points are unchanged.
+    return JSON.stringify(keys.map(key=>key==='incidence'&&state.angleMode==='scattering'&&state.scanAxis==='incidence'?null:state[key]));
+  }
   function prepareMap(){
-    try{M.validate(state);currentScan=M.scan(state);$('scanError').hidden=true;}
+    try{M.validate(state);const key=trajectoryKey();if(!scanCache||scanCache.key!==key)scanCache={key,points:M.scan(state)};currentScan=scanCache.points;$('scanError').hidden=true;}
     catch(e){currentScan=[];$('scanError').textContent=I.error(e.message);$('scanError').hidden=false;}
     map.update(state,currentScan);
   }
   function render(){
     try{M.validate(state,{scanRange:false});prepareMap();valid=true;$('error').hidden=true;document.body.classList.remove('invalid');$('liveBadge').textContent='● LIVE';disableExports(false);if(!currentScan.length){$('scanDownload').disabled=true;$('heatmapDownload').disabled=true;}}
-    catch(e){valid=false;currentScan=[];currentSpectrum=[];$('scanPoints').replaceChildren();map.clear();$('error').textContent=I.error(e.message);$('error').hidden=false;document.body.classList.add('invalid');$('liveBadge').textContent=t("Check inputs");disableExports(true);
+    catch(e){valid=false;currentScan=[];currentSpectrum=[];tableScan=null;$('scanPoints').replaceChildren();map.clear();$('error').textContent=I.error(e.message);$('error').hidden=false;document.body.classList.add('invalid');$('liveBadge').textContent=t("Check inputs");disableExports(true);
       for(const id of ['spectrum','geometry']){const svg=$(id);svg.replaceChildren();label(svg,id==='geometry'?200:320,100,t("Check the input conditions"),'#ff9aaa',13);}
       clearHeatmap();
       for(const id of ['qMagnitude','qParallel','qNormal','hkl','exitAngle','scanTime','selectedAngle','pointCount','scanSummary','spectrumSummary','lossBadge','scanBadge','zoneSummary'])$(id).textContent='—';$('mapTooltip').hidden=true;$('scanError').hidden=true;return;
@@ -120,16 +137,21 @@
     drawGeometry();drawSpectrum();if(count&&$('energySimulation').open)drawHeatmap();else clearHeatmap();renderReferences();persist();
   }
   function angleFailure(error){$('angleError').setAttribute('data-error-source',error.message);$('angleError').textContent=I.error(error.message)+t(' The previous geometry has been kept.');$('angleError').hidden=false;}
-  function selectGeometry(axis,value,resetRange=true){
+  function selectGeometry(axis,value){
     try{
       const next=M.geometryAt(state,axis,value);M.validate(next,{scanRange:false});state=next;
-      $('angleError').hidden=true;syncSliders(resetRange);render();
+      $('angleError').hidden=true;syncSliders(true);schedule();
     }catch(e){syncMomentumInputs();$('incidenceRange').value=state.incidence;angleFailure(e);}
   }
-  function selectAngle(value){selectGeometry(state.scanAxis,value,false);}
-  function inputIncidence(){
-    try{const value=$('incidence').value.trim()===''?NaN:Number($('incidence').value),angle=state.incidenceUnit==='angle'?value:M.inverseAngle(state,value,'incidence',state.incidenceComponent,state.incidenceUnit,state.incidence);selectGeometry('incidence',angle);}
-    catch(e){syncMomentumInputs();angleFailure(e);}
+  function selectAngle(value){selectGeometry(state.scanAxis,value);}
+  function inputIncidence(){selectGeometry('incidence',$('incidence').value.trim()===''?NaN:Number($('incidence').value));}
+  function calculateAngles(){
+    try{
+      const value=$('momentumTarget').value.trim()===''?NaN:Number($('momentumTarget').value);
+      const next=M.geometryForMomentum(state,value,state.momentumComponent,state.units);
+      M.validate(next,{scanRange:false});state=next;
+      $('angleError').hidden=true;syncSliders(true);schedule();
+    }catch(e){angleFailure(e);}
   }
   function inputEndpoint(key,source){
     try{
@@ -139,6 +161,12 @@
     }catch(e){syncSliders();$('scanError').textContent=I.error(e.message)+t(' The previous range has been kept.');$('scanError').hidden=false;}
   }
   function renderScanPoints(){
+    const language=document.documentElement.lang;
+    if(tableScan===currentScan&&tableDwell===state.dwell&&tableLanguage===language){
+      for(const [index,p]of currentScan.entries())$('scanPoints').children[index].className=Math.abs(p.scanValue-state[state.scanAxis])<1e-7?'selected':'';
+      return;
+    }
+    tableScan=currentScan;tableDwell=state.dwell;tableLanguage=language;
     $('scanPoints').replaceChildren();
     for(const [index,p]of currentScan.entries()){
       const tr=document.createElement('tr'),td=document.createElement('td'),button=document.createElement('button');button.textContent=index+1;button.setAttribute('aria-label',t('Select scan point {index}',{index:index+1}));button.addEventListener('click',()=>selectAngle(p.scanValue));td.append(button);tr.append(td);
@@ -175,7 +203,8 @@
   }
   function heatColor(t){const stops=[[17,27,55],[40,82,125],[76,158,154],[183,216,155],[250,230,163]],v=Math.min(3.99999,Math.max(0,t)*4),i=Math.floor(v),u=v-i;return stops[i].map((x,j)=>Math.round(x+(stops[i+1][j]-x)*u));}
   function drawHeatmap(){
-    currentHeatmap=M.heatmap(state,101,240);const hm=currentHeatmap,canvas=$('heatmap'),ctx=canvas.getContext('2d');
+    const key=trajectoryKey()+JSON.stringify(['resonance','resonanceWidth','resolution','lossMin','lossMax','phonon','magnon','dd','intrinsic','elasticWeight','phononWeight','magnonWeight','ddWeight'].map(k=>state[k]));
+    if(!currentHeatmap||heatmapKey!==key){currentHeatmap=M.heatmap(state,101,240);heatmapKey=key;}const hm=currentHeatmap,canvas=$('heatmap'),ctx=canvas.getContext('2d');
     canvas.width=1280;canvas.height=600;ctx.scale(2,2);ctx.clearRect(0,0,640,300);
     const off=document.createElement('canvas');off.width=hm.columns;off.height=hm.rows;const oc=off.getContext('2d'),im=oc.createImageData(hm.columns,hm.rows);
     for(let x=0;x<hm.columns;x++)for(let y=0;y<hm.rows;y++){const rgb=heatColor(hm.data[x][hm.rows-1-y].intensity/hm.max),idx=(y*hm.columns+x)*4;im.data[idx]=rgb[0];im.data[idx+1]=rgb[1];im.data[idx+2]=rgb[2];im.data[idx+3]=255;}
@@ -186,12 +215,14 @@
     if(state[state.scanAxis]>=state.start&&state[state.scanAxis]<=state.end&&state.start!==state.end){const x=62+(state[state.scanAxis]-state.start)/(state.end-state.start)*555;ctx.strokeStyle='#ffb45d';ctx.lineWidth=1;ctx.setLineDash([4,4]);ctx.beginPath();ctx.moveTo(x,20);ctx.lineTo(x,245);ctx.stroke();ctx.setLineDash([]);}
   }
   function renderReferences(){
+    const key=JSON.stringify([elementFilter,$('edgeSearch').value,state.edge,state.energy,state.scattering,document.documentElement.lang]);
+    if(referenceKey===key)return;referenceKey=key;
     const query=$('edgeSearch').value.trim().toLowerCase();const rows=refs.filter(r=>(!elementFilter||r.element===elementFilter)&&(!query||`${r.element} ${r.edge} ${r.orbital} ${r.energy}`.toLowerCase().includes(query)));
     $('edgeTable').replaceChildren();for(const r of rows){const selected=r.id===state.edge&&Math.abs(r.energy-state.energy)<1e-8;const tr=document.createElement('tr');if(selected)tr.className='selected';for(const text of [r.element,r.edge,r.orbital,fmt(r.energy,1),fmt(2*r.energy/M.HBARC*Math.sin(state.scattering*M.RAD/2),4)]){const td=document.createElement('td');td.textContent=text;tr.append(td);}const td=document.createElement('td'),button=document.createElement('button');button.textContent=selected?t("Applied"):t("Apply");button.setAttribute('aria-label',t('Apply {element} {edge}',r));button.addEventListener('click',()=>applyEdge(r.id));td.append(button);tr.append(td);$('edgeTable').append(tr);}
     if(!rows.length){const tr=document.createElement('tr'),td=document.createElement('td');td.colSpan=6;td.textContent=t("No matching reference. Change the search or element filter.");tr.append(td);$('edgeTable').append(tr);}
     for(const el of $('elements').children)el.setAttribute('aria-pressed',String(el.dataset.element===elementFilter));
   }
-  function applyEdge(id){const r=refs.find(x=>x.id===id);state.edge=id;if(r){state.energy=r.energy;if(state.loss>=state.energy)state.loss=state.energy/10;if(state.lossMax>=state.energy)state.lossMax=state.energy*.9;if(state.lossMin>=state.lossMax)state.lossMin=-.15;}try{if(state.angleMode==='l')Object.assign(state,M.captureL(state));if(state.angleMode==='hk')Object.assign(state,M.captureHK(state));}catch{/* Invalid geometry is reported by render. */}syncControls();syncSliders(true);render();}
+  function applyEdge(id){const r=refs.find(x=>x.id===id);state.edge=id;if(r){state.energy=r.energy;if(state.loss>=state.energy)state.loss=state.energy/10;if(state.lossMax>=state.energy)state.lossMax=state.energy*.9;if(state.lossMin>=state.lossMax)state.lossMin=-.15;}try{if(state.angleMode==='l')Object.assign(state,M.captureL(state));if(state.angleMode==='hk')Object.assign(state,M.captureHK(state));}catch{/* Invalid geometry is reported by render. */}syncControls(true);render();}
   function download(name,data,type){const blob=new Blob([data],{type}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1500);}
   function metadata(){return '# RIXS Cut Planner v1; q=kin-kout; surface normal || a cross b\n# settings='+JSON.stringify(state)+'\n';}
   function exportScan(){if(!valid||!currentScan.length)return;const header='index,incidence_deg,exit_deg,energy_in_eV,energy_out_eV,loss_eV,qx_A-1,qy_A-1,qz_A-1,qparallel_A-1,qabs_A-1,H_rlu,K_rlu,L_rlu,dwell_min,scattering_deg,tilt_deg,azimuth_deg\n';const rows=currentScan.map((q,i)=>[i+1,q.incidence,q.beta,state.energy,state.energy-state.loss,state.loss,...q.q,q.parallel,q.magnitude,...q.hkl,state.dwell/60,q.scattering,q.tilt,q.azimuth].join(','));download('rixs-scan.csv',metadata()+header+rows.join('\n'),'text/csv;charset=utf-8');message("Scan settings and momenta exported as CSV.");}
@@ -207,6 +238,7 @@
   syncControls();
   for(const el of document.querySelectorAll('[data-state]'))el.addEventListener('input',['azimuth','tilt'].includes(el.id)?()=>selectGeometry(el.id,el.value.trim()===''?NaN:Number(el.value)):updateFromInputs);
   $('incidence').addEventListener('input',inputIncidence);
+  $('calculateAngles').addEventListener('click',calculateAngles);
   for(const id of ['incidence','azimuth','tilt','dwell'])$(id).addEventListener('blur',syncMomentumInputs);
   $('dwell').addEventListener('input',()=>{state.dwell=$('dwell').value.trim()===''?NaN:Number($('dwell').value)*60;schedule();});
   for(const key of ['start','end'])for(const el of [$(key),$(key+'Range')])el.addEventListener('input',()=>inputEndpoint(key,el));

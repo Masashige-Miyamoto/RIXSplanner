@@ -7,7 +7,7 @@
     energy:932.7, resonance:932.7, resonanceWidth:0.4, edge:'Cu-L3',
     scattering:150, incidence:25, azimuth:0, tilt:0, loss:0.3, angleMode:'scattering', lockedL:0, lockBranch:-1, lockedH:0, lockedK:0,
     lattice:'tetragonal', centering:'P', a:3.85, b:3.85, c:13.2, alpha:90, beta:90, gamma:90,
-    start:10, end:140, hStep:0.01, dwell:30, scanAxis:'incidence', scanComponent:0, scanRangeUnit:'angle', incidenceUnit:'angle', incidenceComponent:0, showScan:true,
+    start:10, end:140, hStep:0.01, dwell:30, scanAxis:'incidence', scanComponent:0, scanRangeUnit:'angle', momentumComponent:0, showScan:true,
     resolution:40, lossMin:-0.15, lossMax:3,
     phonon:0.07, magnon:0.3, dd:1.7, intrinsic:0.08,
     elasticWeight:0.3, phononWeight:0.25, magnonWeight:1, ddWeight:0.6,
@@ -39,7 +39,7 @@
     if(!CENTERINGS[s.lattice].includes(s.centering)) throw Error("Select a centering compatible with the crystal system.");
     if(![2,3].includes(s.dimension)||!['xz','xy','zy'].includes(s.projection)||!['angstrom','rlu'].includes(s.units)) throw Error("Invalid display settings.");
     crystal(s);
-    if(!['incidence','azimuth','tilt'].includes(s.scanAxis)||![0,1,2].includes(s.scanComponent)||![0,1,2].includes(s.incidenceComponent)||!['angle','momentum'].includes(s.scanRangeUnit)||!['angle','rlu','angstrom'].includes(s.incidenceUnit))throw Error('Invalid scan controls.');
+    if(!['incidence','azimuth','tilt'].includes(s.scanAxis)||![0,1,2].includes(s.scanComponent)||![0,1,2].includes(s.momentumComponent)||!['angle','momentum'].includes(s.scanRangeUnit))throw Error('Invalid scan controls.');
     if(scanRange){const range=scanLimits(s);if(s.start<range.min-1e-7||s.end>range.max+1e-7)throw Error('Scan angles must stay inside the available range.');}
     return s;
   }
@@ -205,6 +205,53 @@
     if(!candidates.length)throw Error('The requested momentum is outside the reachable range.');
     return candidates.sort((a,b)=>Math.abs(a-near)-Math.abs(b-near))[0];
   }
+  // Inverse input holds the two sample rotations fixed. L/HK locks add
+  // linear constraints on the in-plane and normal momentum (p,n), so the
+  // remaining beam angles can be recovered from the scattering triangle.
+  function geometryForMomentum(s,target,component=s.momentumComponent,units=s.units){
+    if(!Number.isFinite(target))throw Error('Momentum must be finite.');
+    if(![0,1,2].includes(component)||!['rlu','angstrom'].includes(units))throw Error('Invalid scan controls.');
+    if(s.angleMode==='scattering'){
+      const incidence=inverseAngle(s,target,'incidence',component,units,s.incidence);
+      return {...s,incidence};
+    }
+    const phi=s.azimuth*RAD,tau=s.tilt*RAD;
+    const u=[Math.cos(phi),Math.sin(phi),0],v=[Math.sin(tau)*Math.sin(phi),-Math.sin(tau)*Math.cos(phi),Math.cos(tau)];
+    const hu=fractional(u,s),hv=fractional(v,s),rows=[[...(units==='rlu'?[hu[component],hv[component]]:[u[component],v[component]]),target]];
+    for(const i of s.angleMode==='l'?[2]:[0,1])rows.push([hu[i],hv[i],i===2?s.lockedL:i===0?s.lockedH:s.lockedK]);
+    const tolerance=1e-8,unreachable=()=>{throw Error('The requested momentum cannot be reached with the current azimuth, tilt and fixed constraints.');};
+    // Normalize rows before comparing their rank (Å and r.l.u. may be mixed).
+    const equations=[];
+    for(const [a,b,c]of rows){const norm=Math.hypot(a,b);if(norm<1e-12){if(Math.abs(c)>tolerance)unreachable();}else equations.push([a/norm,b/norm,c/norm]);}
+    let pair=null;
+    for(let i=0;i<equations.length;i++)for(let j=i+1;j<equations.length;j++){
+      const [a,b]=equations[i],[c,d]=equations[j],det=a*d-b*c;
+      if(Math.abs(det)>1e-10&&(!pair||Math.abs(det)>Math.abs(pair.det)))pair={first:equations[i],second:equations[j],det};
+    }
+    if(!pair){
+      // With just one independent constraint, retain 2theta and pick the
+      // nearest alpha satisfying it. This also handles a redundant target.
+      const current=momentum(s),value=(units==='rlu'?current.hkl:current.q)[component];
+      if(Math.abs(value-target)<tolerance)return {...s};
+      const incidence=inverseAngle({...s,angleMode:'scattering'},target,'incidence',component,units,s.incidence),next={...s,incidence};
+      const p=momentum(next);
+      if(rows.some(([a,b,c])=>Math.abs(a*p.parallel+b*p.planeNormal-c)>tolerance))unreachable();
+      return next;
+    }
+    const {first:[a,b,c],second:[d,e,f],det}=pair,p=(c*e-b*f)/det,n=(a*f-c*d)/det;
+    if(rows.some(([a,b,c])=>Math.abs(a*p+b*n-c)>tolerance))unreachable();
+    const ki=s.energy/HBARC,kf=(s.energy-s.loss)/HBARC,cos=(ki*ki+kf*kf-p*p-n*n)/(2*ki*kf);
+    if(Math.abs(cos)>1+1e-10)unreachable();
+    const theta=Math.acos(Math.max(-1,Math.min(1,cos)));
+    const incidence=(Math.atan2(-n,p)-Math.atan2(kf*Math.sin(theta),ki-kf*Math.cos(theta)))/RAD;
+    const next={...s,incidence,scattering:theta/RAD};
+    if(incidence<=0||next.scattering-incidence<=1e-7)unreachable();
+    validate(next,{scanRange:false});
+    if(Math.abs((units==='rlu'?momentum(next).hkl:momentum(next).q)[component]-target)>tolerance)unreachable();
+    // Retain the requested fixed-L outgoing branch for subsequent scans.
+    if(s.angleMode==='l')next.lockBranch=captureL(next).lockBranch;
+    return next;
+  }
   function scan(s){
     const limits=scanLimits(s);
     if(s.start>s.end||s.start<limits.min-1e-7||s.end>limits.max+1e-7)throw Error('Scan angles must stay inside the available range.');
@@ -311,6 +358,7 @@
       if(typeof raw[key]!==typeof s[key]) throw Error(key+" has an invalid data type.");
       s[key]=raw[key];
     }
+    if(!Object.hasOwn(raw,'momentumComponent')&&[0,1,2].includes(raw.incidenceComponent))s.momentumComponent=raw.incidenceComponent;
     if(raw.projection==='3d'){s.dimension=3;s.projection='xz';}else if(raw.projection==='yz')s.projection='zy';
     if(!Object.hasOwn(raw,'hStep')&&Number.isInteger(raw.points)&&raw.points>0){
       if(raw.points===1)s.end=s.start;
@@ -319,7 +367,7 @@
     if(!Object.hasOwn(raw,'scanAxis')&&s.units==='angstrom')s.hStep*=2*Math.PI/cell(s).a;
     validate(s,{scanRange:false});if(s.angleMode==='l'&&Math.abs(momentum(s).hkl[2]-s.lockedL)>1e-7)throw Error("The saved fixed-L target does not match the current geometry.");if(s.angleMode==='hk'){const p=momentum(s);if(Math.abs(p.hkl[0]-s.lockedH)>1e-7||Math.abs(p.hkl[1]-s.lockedK)>1e-7)throw Error('The saved H, K target does not match the current geometry.');}return s;
   }
-  const api={HBARC,RAD,defaults,CENTERINGS,validate,cell,crystal,reciprocal,fractional,momentum,captureL,captureHK,geometryAt,componentValue,inverseAngle,componentExtent,solveScattering,scanGeometry,scanPoint,scanLimits,scan,basalZone,project,zoneProjection,zoneMesh,occupiedZones,displayVector,displayReadout,convexHull,gaussian,peaks,resonanceFactor,spectrum,heatmap,sanitize};
+  const api={HBARC,RAD,defaults,CENTERINGS,validate,cell,crystal,reciprocal,fractional,momentum,captureL,captureHK,geometryAt,geometryForMomentum,componentValue,inverseAngle,componentExtent,solveScattering,scanGeometry,scanPoint,scanLimits,scan,basalZone,project,zoneProjection,zoneMesh,occupiedZones,displayVector,displayReadout,convexHull,gaussian,peaks,resonanceFactor,spectrum,heatmap,sanitize};
   if(typeof module!=='undefined')module.exports=api;
   root.RIXS=api;
 })(typeof globalThis!=='undefined'?globalThis:this);

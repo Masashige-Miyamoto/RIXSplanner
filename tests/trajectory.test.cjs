@@ -58,5 +58,37 @@ test('reference contains exactly H through U and orbital-derived edge identifier
 });
 test('legacy H steps migrate once to physical units and new scan controls round-trip',()=>{
   const old={...M.defaults};delete old.scanAxis;const migrated=M.sanitize(old);close(migrated.hStep,old.hStep*2*Math.PI/old.a);close(M.sanitize(migrated).hStep,migrated.hStep);
-  const s=setup({angleMode:'hk',scanAxis:'tilt',scanComponent:2,incidenceUnit:'rlu',incidenceComponent:2,scanRangeUnit:'momentum'});assert.deepEqual(M.sanitize(s),s);assert.throws(()=>M.sanitize({...s,lockedH:s.lockedH+1}),/target/);
+  const s=setup({angleMode:'hk',scanAxis:'tilt',scanComponent:2,momentumComponent:2,scanRangeUnit:'momentum'});assert.deepEqual(M.sanitize(s),s);assert.throws(()=>M.sanitize({...s,lockedH:s.lockedH+1}),/target/);
+});
+
+
+test('button inversion changes only alpha at fixed 2theta, otherwise alpha and 2theta',()=>{
+  for(const units of ['angstrom','rlu'])for(const lattice of [{},{lattice:'triclinic',alpha:75,beta:80,gamma:100}])for(const angleMode of ['scattering','l','hk']){
+    const s=setup({...lattice,angleMode,azimuth:25,tilt:angleMode==='hk'?0:20,loss:5,units});
+    const expected=M.geometryAt(s,'incidence',30),component=angleMode==='hk'?2:0;
+    const target=(units==='rlu'?M.momentum(expected).hkl:M.momentum(expected).q)[component];
+    const before={...s},next=M.geometryForMomentum(s,target,component,units);
+    assert.deepEqual(s,before);close(next.incidence,30,1e-5);close(next.scattering,expected.scattering,1e-5);
+    close(next.azimuth,s.azimuth);close(next.tilt,s.tilt);
+    for(const key of Object.keys(s))if(!['incidence','scattering','lockBranch'].includes(key))assert.equal(next[key],s[key],key);
+    const p=M.momentum(next);close((units==='rlu'?p.hkl:p.q)[component],target);
+    if(angleMode==='l')close(p.hkl[2],s.lockedL);
+    if(angleMode==='hk'){close(p.hkl[0],s.lockedH);close(p.hkl[1],s.lockedK);}
+    if(angleMode==='scattering')assert.equal(next.scattering,s.scattering);
+  }
+});
+test('inverse button rejects incompatible fixed sample rotations and unreachable targets',()=>{
+  const s=setup({angleMode:'hk',tilt:20,azimuth:25}),current=M.momentum(s).hkl[2];
+  assert.throws(()=>M.geometryForMomentum(s,current+.1,2,'rlu'),/cannot be reached/);
+  close(M.geometryForMomentum(s,current,2,'rlu').incidence,s.incidence);
+  for(const angleMode of ['scattering','l','hk']){
+    const s=setup({angleMode});assert.throws(()=>M.geometryForMomentum(s,NaN),/finite/);
+    assert.throws(()=>M.geometryForMomentum(s,1000,0),/outside|cannot be reached/);
+  }
+  assert.throws(()=>M.geometryForMomentum(setup(),0,1),/constant/);
+});
+test('old alpha input units migrate without changing the stored angle or scan',()=>{
+  const old={...M.defaults,incidenceUnit:'rlu',incidenceComponent:2};delete old.momentumComponent;
+  const restored=M.sanitize(old);assert.equal(restored.incidence,old.incidence);assert.equal(restored.momentumComponent,2);
+  assert.equal(restored.start,old.start);assert.equal(restored.end,old.end);assert.equal(Object.hasOwn(restored,'incidenceUnit'),false);
 });
